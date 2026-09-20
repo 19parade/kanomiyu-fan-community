@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.12
+- ステータス: Draft v1.15
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -185,7 +185,11 @@ Next.js App Router構成を前提とする。
 
 命名規則: テーブル名はスネークケース複数形、主キーは `id uuid`、作成日時は `created_at`、更新日時は `updated_at` で統一する。
 
-**アカウント削除について（確定）**: MVPでは、ユーザー自身または管理者によるアカウントの完全削除（退会）機能は実装しない。これに伴い、`profiles`を参照する各テーブルのFK（`posts.author_id`、`comments.author_id`等）のON DELETEは、原則として`RESTRICT`（または`NO ACTION`）とする。アカウント削除機能を将来実装する場合は、その時点で関連コンテンツの扱い（削除・匿名化・保持等）を含めて別途設計し、必要なFK制約を見直すものとする。
+**UUID主キーの生成方針（確定）**: UUID型の主キーを持つテーブルでは、原則としてDB側で`DEFAULT gen_random_uuid()`を使用する。ただし`profiles.id`は例外とし、`auth.users.id`をそのまま使用するため、独自のDEFAULT UUID生成は設定しない（6.1参照）。`gen_random_uuid()`が対象Supabase環境で標準利用可能かはmigration実装時に確認し、利用可能な場合は不要な拡張機能の有効化を追加しない。明示的な`pgcrypto`有効化が必要な場合のみ、Supabaseの現行推奨方法に従って有効化する。
+
+**updated_atの自動更新（確定）**: `updated_at`列を持つテーブルでは、INSERT時は`DEFAULT now()`、UPDATE時は共通の`BEFORE UPDATE`トリガー関数によって`updated_at = now()`を自動設定する。クライアントに`updated_at`の値を指定・管理させない。この共通トリガー関数は`NEW.updated_at`を書き換えるだけの単純な用途であり、`SECURITY DEFINER`にする必要は原則ない。対象テーブルごとに同じ関数を再利用する。具体的なSQLはmigration実装時に決定する。
+
+**アカウント削除について（確定）**: MVPでは、ユーザー自身または管理者によるアカウントの完全削除（退会）機能は実装しない。これに伴い、`profiles`を参照する各テーブルのFK（`posts.author_id`、`comments.author_id`等）のON DELETEは、原則として`RESTRICT`（または`NO ACTION`）とする。`profiles.id → auth.users.id`のFKについても同様にON DELETE RESTRICT（またはNO ACTION）とする。`profiles.id`と`auth.users.id`は1対1で対応し、`profiles.id`に独自のUUIDを生成することはしない（上記UUID主キーの生成方針、6.1参照）。このクロススキーマFKがSupabase実環境で正常に作成・機能するかは、migration実装時の検証項目とする。アカウント削除機能を将来実装する場合は、その時点で関連コンテンツの扱い（削除・匿名化・保持等）を含めて別途設計し、必要なFK制約を見直すものとする。
 
 ### 6.1 profiles
 
@@ -193,7 +197,7 @@ Next.js App Router構成を前提とする。
 
 | カラム | 型 | 説明 |
 |---|---|---|
-| id | uuid (PK) | `auth.users.id` を参照 |
+| id | uuid (PK, FK → auth.users.id) | `auth.users.id`を参照する1対1のFK。`profiles.id`には独自のUUIDを生成しない |
 | username | text | 公開プロフィールURL(`/fans/[username]`)に使用する一意な識別子 |
 | display_name | text | 表示名 |
 | avatar_url | text (nullable) | Storage `avatars` バケット内のobject key（完全URLではない。9章参照） |
@@ -251,8 +255,8 @@ Next.js App Router構成を前提とする。
 `username`・`role`・`status`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`は、本人であっても通常の更新経路から直接変更できないよう保護する。
 
 - 本人による`UPDATE`は、上記の保護対象カラムを除いた編集可能なカラム（`display_name`・`avatar_url`・`bio`・`fan_since`等）のみに限定する。RLSの行ポリシー（8章「本人 or admin」）に加えて、列単位のアクセス制御（例: PostgreSQLの列単位GRANT/REVOKE等）を用いて、保護対象カラムへの直接UPDATEをDB側で拒否する。
-- 管理者による`role`・`status`の変更は、`SECURITY DEFINER`関数等の安全なサーバー側経路（RPC）を経由して行う。これは`is_admin()`（8章「管理者判定とRLSの循環参照回避」参照）と同様の設計思想であり、通常のUPDATE経路に対する列単位の保護を維持したまま、管理者操作を可能にするための仕組みである。
-- 利用規約・プライバシーポリシーへの再同意（`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`の更新）も、本人による直接UPDATEではなく、専用のRPC等の安全なサーバー側経路を経由して行う（7章参照）。
+- 管理者による`role`の変更は`admin_set_user_role(target_user_id, new_role)`、`status`の変更は`admin_set_user_status(target_user_id, new_status)`という、それぞれ独立したSECURITY DEFINER RPCを経由して行う（確定）。いずれもRPC内部で`is_admin()`（8章「管理者判定とRLSの循環参照回避」参照）を必ず確認し、admin以外からの呼び出しを拒否する。対象ユーザーへの変更には、DB側の`role`/`status`のCHECK制約（6.1参照）も適用される。通常のUPDATE経路に対する列単位の保護（上記）を維持したまま、管理者操作を可能にするための仕組みである。
+- 利用規約・プライバシーポリシーへの再同意は、`record_policy_consent()`という専用のSECURITY DEFINER RPCを経由して行う（確定。7章参照）。このRPCは以下の値を使用する：対象ユーザー→`auth.uid()`、`terms_version`→`app_settings`（6.13参照）に保存された現行の利用規約バージョン、`privacy_policy_version`→`app_settings`に保存された現行のプライバシーポリシーバージョン、`terms_agreed_at`→DB側の`now()`、`privacy_policy_agreed_at`→DB側の`now()`。クライアントから`user_id`・`terms_version`・`privacy_policy_version`・`terms_agreed_at`・`privacy_policy_agreed_at`のいずれも信頼して受け取らない（確定。Q45）。現行の規約バージョンは、アプリ側の定数ではなくDB側の`app_settings`を正本とする。
 - 同意そのもの（利用規約・プライバシーポリシーへの同意）は必須とする。本プロジェクトは新規構築であり、MVPでは会員登録時に利用規約・プライバシーポリシーへの同意を必須とするため、`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`はいずれも`profiles`の必須情報として扱う。特に`terms_agreed_at`・`privacy_policy_agreed_at`はNOT NULLとする（確定）。「同意日時が存在しない状態」の通常会員プロフィールは許容しない。
 - `role`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`member`/`admin`、`active`/`suspended`/`banned`（6.1参照）に強制する。新しい値を追加することはしない。
 - `username`はMVPでは変更不可（6.1「username変更について」参照）のため、`role`・`status`・`terms_*`・`privacy_policy_*`のような変更用RPCは用意しない。`/me/edit`では読み取り専用項目として扱い、アプリ側だけでなくDB側でも変更不可を保証する。既存のusername形式（`^[a-z0-9_-]{3,20}$`）およびUNIQUE制約の方針は維持する。
@@ -261,6 +265,15 @@ Next.js App Router構成を前提とする。
 #### 6.1.4 公開プロフィールVIEW（確定）
 
 一般ユーザーが他ユーザーのプロフィールを取得する際、`profiles`本体を直接の取得元としない。RLSは行単位の制御であり、「同じ行の一部カラムだけを一般公開する」という要件をRLSだけで実現することはできないため、公開プロフィール用VIEW（例: `public_profiles`）を設ける。
+
+一般ユーザーによる他ユーザーの`profiles`本体への直接SELECTは禁止する（確定）。責務分離は以下のとおりとする。
+
+- 他人の公開プロフィール取得: `public_profiles`VIEW経由。
+- 本人: 自分自身の`profiles`行のみSELECT可能。
+- admin: 管理上必要な`profiles`行をSELECT可能。
+- 他ユーザーの`role`・`status`・利用規約/プライバシーポリシー同意情報等: 一般ユーザーからは取得不可。
+
+VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み合わせについては、migration実装時にSupabase/PostgreSQLの現行仕様を確認し、上記のアクセス要件を満たす構成にする。
 
 - `public_profiles`に含める項目（少なくとも）: `id`・`username`・`display_name`・`avatar_url`・`bio`・`fan_since`。
 - `public_profiles`に含めない項目（内部・保護情報）: `role`・`status`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`。
@@ -583,7 +596,7 @@ Next.js App Router構成を前提とする。
 | カラム | 型 | 説明 |
 |---|---|---|
 | id | uuid (PK) | |
-| email | text | 試行対象のメールアドレス |
+| email | text | 試行対象のメールアドレス（正規化済みの値を保存する。8章「ログイン失敗（アプリ側で制御）」参照） |
 | ip_address | inet (nullable) | 参考情報として記録するIPアドレス |
 | attempted_at | timestamptz | 失敗が発生した日時 |
 
@@ -592,6 +605,32 @@ Next.js App Router構成を前提とする。
 **ユニーク制約**: なし。
 
 **記録方式・RLS方針**: 8章「レート制限の実装方式（確定）」の「ログイン失敗（アプリ側で制御）」を参照。
+
+---
+
+### 6.13 app_settings
+
+**目的**: 現行の利用規約バージョン・現行のプライバシーポリシーバージョンをはじめとする、アプリケーション全体の設定値をDB側で一元管理する（確定。Q45）。アプリケーション側の定数を正本とせず、本テーブルを正本とする。
+
+**保持する設定値（少なくとも）**:
+- 現在の利用規約バージョン
+- 現在のプライバシーポリシーバージョン
+
+具体的なカラム構造・型・初期値は、本バージョンでは確定せず、migration設計時に既存仕様との整合を確認して決定する。
+
+**リレーション**: なし（独立した設定用テーブル）。
+
+**ユニーク制約**: 本バージョンでは確定しない（migration設計時に決定）。
+
+**アクセス制御方針（確定）**:
+- `app_settings`はDB内部の信頼できる設定値の正本として扱い、一般クライアントから直接読み取らせない（確定。Q46）。
+- anonによる`app_settings`の直接SELECTは禁止する（確定。Q46）。
+- authenticated一般ユーザーによる`app_settings`の直接SELECTも禁止する（確定。Q46）。
+- 一般ユーザー（anon・authenticatedいずれも）によるINSERT/UPDATE/DELETEも禁止する（確定。Q45／Q46）。DB権限/RLS等で保証する。
+- adminについても、MVPで直接SELECTする必要がない限り、広い直接SELECT権限を付与しない（確定。Q46）。service roleや、必要なDB内部処理（下記のtrigger・RPC等）など、明確に必要な経路のみアクセス可能とする。
+- 現行バージョンの参照は、`profiles`自動作成trigger（7章「profilesの自動作成（確定）」参照）および`record_policy_consent()`（6.1.3参照）が、いずれもDB内部から（クライアント経由の直接SELECTではなく）行う。signupと再同意の双方が、同じ`app_settings`上の現行バージョンを参照する。これらの処理で`SECURITY DEFINER`を使用する場合は、既存仕様（`is_admin()`等）と同様に`search_path`を固定し、必要最小限の権限とする。
+- 将来、現行規約バージョンをクライアント画面へ表示する必要が生じた場合でも、`app_settings`テーブル全体を直接公開しない（確定。Q46）。その場合は、必要な値だけを返す安全なサーバー側処理または専用の読み取り手段を別途設計するものとし、MVP時点ではそのための新しいRPC/APIは追加しない。
+- 現行バージョンを将来変更する具体的な運用方法（migrationによる更新か、別の安全な管理経路か）は、本バージョンでは確定しない。新たな管理者用RPCや管理画面は今回追加しない。
 
 ---
 
@@ -606,9 +645,10 @@ Next.js App Router構成を前提とする。
 
 会員登録時の`profiles`作成方式は、Supabase Authによる`auth.users`作成を起点とするDBトリガー方式に確定する。
 
-- サインアップ時に必要なプロフィール情報・同意情報（少なくとも`username`・`display_name`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`）は、Authのユーザーメタデータ等、トリガーから参照可能な方法でクライアントから渡し、トリガーが`profiles`レコード作成時にNOT NULL項目を満たせるようにする。
+- サインアップ時に必要なプロフィール情報・同意情報（少なくとも`username`・`display_name`）は、Authのユーザーメタデータ等、トリガーから参照可能な方法でクライアントから渡し、トリガーが`profiles`レコード作成時にNOT NULL項目を満たせるようにする。
 - クライアントから渡されたメタデータを無条件に信頼しない。特に`role`・`status`のような権限・アカウント状態情報は、クライアントメタデータからは設定せず、DB側で安全な初期値（`role='member'`・`status='active'`）を設定する。
-- username形式（6.1参照）、username UNIQUE制約、必須値の充足、規約への同意、現行の`terms_version`/`privacy_policy_version`との整合性については、DB/サーバー側でも必要な検証を行う。
+- `terms_version`・`privacy_policy_version`についても、クライアントから渡された値を現行バージョンの正本として信用しない（確定。Q45）。`app_settings`（6.13参照）に保存された現行の利用規約バージョン・現行のプライバシーポリシーバージョンを基準とし、トリガーは`profiles.terms_version`・`profiles.privacy_policy_version`に`app_settings`側の値を記録する。クライアントには、ユーザーが現在の規約・プライバシーポリシーへ同意したことの確認（同意チェックボックス等）のみを求める。
+- username形式（6.1参照）、username UNIQUE制約、必須値の充足については、DB/サーバー側でも必要な検証を行う。
 - 上記の目的は、`auth.users`は存在するが`profiles`が存在しない不整合状態を極力作らないことである。
 - 具体的なトリガー関数のSQL・メタデータの受け渡し方法は、本バージョンでは確定せず、migration設計時に決定する。
 
@@ -616,9 +656,9 @@ Next.js App Router構成を前提とする。
 
 - サインアップ時に、利用規約への同意を `profiles.terms_version`（同意したバージョン）と `profiles.terms_agreed_at`（同意日時）として記録する。
 - 同様に、プライバシーポリシーへの同意を `profiles.privacy_policy_version` と `profiles.privacy_policy_agreed_at` として記録する。
-- アプリ側で「現行の利用規約バージョン」「現行のプライバシーポリシーバージョン」を定数・設定値として管理し、ログイン中のユーザーの各バージョンがそれと一致しない場合に比較できるデータ構造をMVPの時点で用意しておく。
+- 「現行の利用規約バージョン」「現行のプライバシーポリシーバージョン」は、アプリケーション側の定数を正本とせず、DB側の`app_settings`テーブル（6.13参照）で一元管理する（確定。Q45）。ログイン中のユーザーの各バージョンがそれと一致しない場合に比較できるデータ構造をMVPの時点で用意しておく。
 - 規約またはプライバシーポリシーを改定した場合に、既存ユーザーへ再同意を求めるかどうか（および求める場合のフロー）は、その改定が発生した時点で判断する。MVP時点ではバージョンを記録・比較できる状態にしておくことのみを必須要件とする。
-- 同意記録の更新（再同意処理）は、本人による直接UPDATEではなく、専用のRPC等の安全なサーバー側経路を経由して行う（6.1.3参照）。
+- 同意記録の更新（再同意処理）は、本人による直接UPDATEではなく、`record_policy_consent()`という専用のRPC（6.1.3参照）を経由して行う。
 
 ---
 
@@ -636,7 +676,7 @@ Next.js App Router構成を前提とする。
 
 | テーブル | 参照(SELECT) | 作成(INSERT) | 更新/削除(UPDATE/DELETE) |
 |---|---|---|---|
-| profiles | 本人 or admin(`is_admin()`)は`profiles`本体を全カラムSELECT可。一般ユーザーは`profiles`本体へ直接SELECTせず、公開プロフィールVIEW`public_profiles`（6.1.4参照）経由で公開情報のみ取得する | 本人（サインアップ時） | 本人（保護対象カラムを除く。6.1.3参照） or admin(`is_admin()`)（role/status等の保護対象カラムの変更は専用RPC経由。6.1.3参照） |
+| profiles | 本人は自分自身の行のみSELECT可、adminは管理上必要な行をSELECT可。一般ユーザーによる他ユーザーの`profiles`本体への直接SELECTは禁止し、公開情報の取得は`public_profiles`VIEW（6.1.4参照）経由に限定する | 本人（サインアップ時） | 本人（保護対象カラムを除く。6.1.3参照） or admin(`is_admin()`)（role/status等の保護対象カラムの変更は専用RPC経由。6.1.3参照） |
 | posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 投稿者本人 or admin(`is_admin()`) |
 | comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | コメント投稿者本人 or admin(`is_admin()`) |
 | likes | 親投稿が公開範囲内であれば全員、それ以外は当該投稿の投稿者本人のみ（いいねした本人ではない） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人（自分の分のみ） or admin(`is_admin()`) が削除可 |
@@ -648,8 +688,9 @@ Next.js App Router構成を前提とする。
 | songs | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | admin_logs | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理（Server Action/Route Handler等）からのみ記録 | 不可（追記のみ、更新・削除禁止） |
 | login_attempts | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理からのみ記録 | 不可（クライアント直接操作不可。成功時の失敗履歴クリアもサーバーサイド処理のみ） |
+| app_settings | anon/authenticated（adminを含む）いずれも不可（確定。Q46）。参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定（6.13参照） | anon/authenticatedいずれも不可（確定。Q45） | anon/authenticatedいずれも不可（確定。Q45） |
 
-> 上記は方針レベルの整理であり、実装時に具体的なSQLポリシーとしてマイグレーションに落とし込む。
+> 上記は方針レベルの整理であり、実装時に具体的なSQLポリシーとしてマイグレーションに落とし込む。`status='active'`の判定は`is_active_user()`（下記参照）を経由する。
 
 ### 管理者判定とRLSの循環参照回避
 
@@ -660,6 +701,17 @@ Next.js App Router構成を前提とする。
 - `SECURITY DEFINER`関数は`search_path`を明示的に固定する（例: `SET search_path = public, pg_temp`）。固定しない場合、呼び出し側が`search_path`を操作して意図しないオブジェクトを参照させる「search_path経由の権限昇格」のリスクがあるため、必ず設定する。
 - 関数の実行権限は必要最小限（`authenticated`ロール等）に絞る。
 - `is_admin()`は原則として引数なしで呼び出し元の認証ユーザー（`auth.uid()`）自身の管理者権限を判定する用途に限定する。任意の`uid`を指定して他ユーザーの管理者権限を判定する用途では使用しない（他者のロールを調べる機能が必要な場合は、別途admin専用の関数・APIとして設計する）。この制約により、RLSポリシーから安全に（＝呼び出し元が任意のユーザーの権限情報を引き出す手段にならない形で）利用できる設計とする。
+
+### is_active_user()関数（確定）
+
+RLSポリシーから`profiles.status='active'`かどうかを判定する専用の関数`is_active_user() returns boolean`を設ける。
+
+- 引数なし。`auth.uid()`を用いて呼び出し元自身の`profiles.status`のみを判定する。
+- `profiles.status='active'`の場合のみtrueを返す。`suspended`/`banned`はfalseを返す。
+- `is_admin()`と同様に`SECURITY DEFINER`として定義し、`search_path`を明示的に固定する。
+- 関数の実行権限は必要最小限（`authenticated`ロール等）に絞る。
+- 各テーブルのINSERTポリシー（「ログイン済み本人（`status='active'`のユーザーのみ）」等）は、`profiles`への直接サブクエリではなく、この関数経由で判定する。目的は、各RLSポリシーから`profiles`を直接繰り返し参照することによる循環参照や複雑化を避けることである。
+- 状態を書き換える機能は持たない（読み取り専用の判定関数）。
 
 ### Next.js 16における認可設計（確定）
 
@@ -706,6 +758,7 @@ Next.js App Router構成を前提とする。
 - 独自制限はNext.jsのRoute Handler/Server Functionが`supabase.auth.signInWithPassword`呼び出しの前後で判定・記録する、アプリケーション層の処理として実装する。
 - 同一メールアドレスへの並行リクエストによるレート制限のすり抜けを防止するため、正規化したメールアドレス単位で処理を直列化する。投稿・コメント・いいね・通報と同様に`pg_advisory_xact_lock`等のDBロックを利用する方針とする（確定）。
 - 基本フローは、(1) Supabase Authでログインを試行、(2) Auth失敗を確認、(3) 正規化したメールアドレス単位でDBロックを取得、(4) ロック取得後に直近15分の失敗回数を確認、(5) 制限条件に従って失敗記録・cooldown判定を行う、という順序とする。
+- メールアドレスの正規化は、前後の空白除去（trim）と全体の小文字化（lower）のみとする（`trim(lower(email))`相当）。失敗回数のCOUNT・`login_attempts`への保存・`pg_advisory_xact_lock`のロックキー生成のいずれも、この同一の正規化ルールを使用する。Gmailの`.`除去、`+tag`除去、`gmail.com`/`googlemail.com`の同一視等、プロバイダ固有の変換は行わない（確定）。
 - 記録は`login_attempts`（6.12参照）に対して行い、Supabase Authで認証を実行した後、認証失敗を確認してから記録する（事後記録方式）。認証実行前に`login_attempts`へ「予約」のレコードを作成する方式は採用しない。
 - ログイン成功時には、それ以前の失敗履歴（`login_attempts`の該当メールアドレスのレコード）をクリアする。
 - `login_attempts`の古いレコードに対する定期的なクリーンアップ処理は、MVPでは実装しない。
@@ -732,9 +785,10 @@ Next.js App Router構成を前提とする。
 
 - 各バケットで許可するのは JPEG / PNG / WebP のみとし、最大ファイルサイズは 5MB とする（8章「画像アップロード制限」参照）。
 - バケットごとにStorage RLSポリシーを設定し、アップロード権限を上記の通り制限する。
+- 上記5バケットはmigrationで管理する（確定）。原則としてmigration SQLでバケットを作成し、Storage policyと合わせてバージョン管理する。具体的な作成方法（SQL文の形式等）は、実装時点のSupabase公式仕様を確認して決定する。公式推奨方法や実環境上の制約と衝突する場合は、独自に仕様変更せず報告するものとする。
 - 各バケットに対応するDBカラム（`profiles.avatar_url`、`posts.image_url`、`events.image_url`、`news.image_url`、`songs.cover_image_url`）には、Storageのobject key（バケット内の相対パス）を保存し、完全なURLは保存しない（確定。6.1/6.2/6.5/6.9/6.10参照）。表示時はアプリ側の共通処理でURLを解決する。
-- `post-images`の読み取り制御は`posts.status`と連動させ、`hidden`/`deleted`の投稿に紐づく画像を一般ユーザーが直接読み取れないようにする（確定。Storage側のアクセス制御で実現する方針）。具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時にposts.statusと安全に連動できる方法を検証する。`avatars`・`event-images`・`song-images`にはこの連動要件は無い（`profiles`/`events`/`songs`には`posts`のような非表示状態が存在しないため）。
-- `news-images`の読み取り制御は、ニュース本文（6.9「表示制御の方針」）と同一の条件に連動させる（確定）。一般ユーザーが画像を閲覧できるのは`news.status='published'`**かつ**`published_at<=現在時刻`の場合のみとし、`draft`の場合、および`status='published'`でも`published_at`が未来（予約公開）の場合は、一般ユーザーは閲覧不可でadminのみ閲覧可能とする。これは`post-images`の`posts.status`連動と同じ考え方であり、画像のobject key（または画像URL）を直接知っている一般ユーザーによる、公開前・予約公開前コンテンツの画像への事前アクセスを防ぐことを目的とする。管理者はdraft・予約公開・公開済みのいずれの状態でも画像を閲覧・管理できる。具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時に`news.status`・`published_at`と安全に連動できる方法を検証する（`post-images`と同様）。
+- `post-images`の読み取り制御は`posts.status`と連動させ、`hidden`/`deleted`の投稿に紐づく画像を一般ユーザーが直接読み取れないようにする（確定。Storage側のアクセス制御で実現する方針）。object keyに`post_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`posts`行を特定し`posts.status`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。`avatars`・`event-images`・`song-images`にはこの連動要件は無い（`profiles`/`events`/`songs`には`posts`のような非表示状態が存在しないため）。
+- `news-images`の読み取り制御は、ニュース本文（6.9「表示制御の方針」）と同一の条件に連動させる（確定）。一般ユーザーが画像を閲覧できるのは`news.status='published'`**かつ**`published_at<=現在時刻`の場合のみとし、`draft`の場合、および`status='published'`でも`published_at`が未来（予約公開）の場合は、一般ユーザーは閲覧不可でadminのみ閲覧可能とする。これは`post-images`の`posts.status`連動と同じ考え方であり、画像のobject key（または画像URL）を直接知っている一般ユーザーによる、公開前・予約公開前コンテンツの画像への事前アクセスを防ぐことを目的とする。管理者はdraft・予約公開・公開済みのいずれの状態でも画像を閲覧・管理できる。object keyに`news_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`news`行を特定し`news.status`・`published_at`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。
 
 ### ファイルパスの命名規則（確定）
 
@@ -742,12 +796,14 @@ Storage RLSでアップロード先を制御できるよう、ファイルパス
 
 ```
 avatars/{user_id}/{uuid}.{ext}
-post-images/{user_id}/{uuid}.{ext}
+post-images/{user_id}/{post_id}/{uuid}.{ext}
 event-images/{uuid}.{ext}
-news-images/{uuid}.{ext}
+news-images/{news_id}/{uuid}.{ext}
 song-images/{uuid}.{ext}
 ```
 
+- `post-images`・`news-images`のobject keyには、それぞれ対応する`posts.id`（`post_id`）・`news.id`（`news_id`）を含める（確定）。これにより、Storage policyがオブジェクトパスから親レコードを特定し、`posts.status`（post-images）、`news.status`・`published_at`（news-images）を参照して読み取り可否を判定できるようになる。`post-images`では`user_id`もパスに残し、投稿者本人との整合確認に利用できる構造とする。MVPでは、画像アップロード前に対象の`posts`/`news`レコードのIDを確保しておくフローを前提とする。
+- `avatars`・`event-images`・`song-images`のobject key規則は変更しない。
 - `avatars`・`post-images` は先頭フォルダを `user_id`（`auth.uid()`と一致する値）とし、Storage RLSポリシーで `storage.foldername(name)[1] = auth.uid()::text` 相当の条件を用いて、他ユーザーの領域へのアップロードを禁止する。
 - `event-images`・`news-images`・`song-images` はユーザーフォルダを持たず、INSERTをadmin(`is_admin()`)のみに制限することでアクセス制御する（`events`/`news`/`songs`がいずれも管理者のみによる作成・更新であるため。8章のRLS方針表参照）。
 - `{ext}` はアップロード制限で許可したMIMEタイプに対応する拡張子のみを許可する。
@@ -796,7 +852,7 @@ song-images/{uuid}.{ext}
 
 実装着手前にChatGPT側での確定、または双方合意が必要な論点。
 
-現時点で未確定事項はない（v1.12時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
+現時点でMVP仕様の未確定事項はない（v1.15時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
 
 ---
 
@@ -817,3 +873,6 @@ song-images/{uuid}.{ext}
 | v1.10 | 2026-09-20 | Q28：`news-images`の読み取り可否を`news.status`と連動させる方針を確定。`news.status='published'`では一般ユーザーも画像を閲覧可能、`news.status='draft'`では一般ユーザーは閲覧不可でadminのみ閲覧可能とすることを9章のバケット一覧・読み取り制御の記述に反映（`post-images`の`posts.status`連動と同じ考え方で、公開前コンテンツの画像漏洩を防ぐことが目的）／具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時に検証する旨を明記／12章の未確定事項から`news-images`の読み取り方針の項目を解消 |
 | v1.11 | 2026-09-20 | Q29：`profiles.terms_agreed_at`・`privacy_policy_agreed_at`をNOT NULLとする方針を確定。本プロジェクトが新規構築であり、MVPでは会員登録時に利用規約・プライバシーポリシーへの同意を必須とするため、「同意日時が存在しない状態」の通常会員プロフィールを許容しないことを6.1・6.1.3に反映／`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`をprofilesの必須情報として明記／再同意は専用RPC経由、本人による直接UPDATE禁止という既存方針（6.1.3）は変更なし／12章の未確定事項を解消（残存項目なし） |
 | v1.12 | 2026-09-20 | 最終整合性レビューのA-1〜A-2・B-1〜B-4を踏まえ、Q30〜Q35を反映。Q30：6.1に「6.1.4 公開プロフィールVIEW（確定）」を新設し、一般ユーザー向けの他者プロフィール取得は`public_profiles`VIEW（公開情報のみ）経由とし、`profiles`本体への直接SELECTは本人・adminに限定する方針を確定、8章RLS方針表のprofiles行を更新／Q31：`news-images`の一般読み取り条件をニュース本文と完全に一致させ（`news.status='published'`かつ`published_at<=現在時刻`）、予約公開中の画像事前漏洩を防止する記述に9章を更新／Q32：会員登録時の`profiles`作成をDBトリガー方式に確定し、7章に「profilesの自動作成（確定）」を新設。ユーザーメタデータ経由での必須情報受け渡し、role/statusをクライアントメタデータから設定しない方針、各種検証方針を明記／Q33：`login_attempts`の判定・記録にも`pg_advisory_xact_lock`等によるメールアドレス単位の並行処理対策を導入する方針を8章に追記／Q34：`username`を6.1.3の保護対象カラムに統合し、username変更用RPCは作成しない方針を明記／Q35：3章のMVP機能一覧に「楽曲一覧・楽曲詳細」を追加し18項目→19項目に更新／12章の未確定事項は引き続き0件を維持 |
+| v1.13 | 2026-09-20 | DB migration実装計画レビューで確定したQ36〜Q44を反映。Q36：`profiles.id → auth.users.id`が1対1のFKであり独自UUIDを生成しないことを6.1・6章冒頭に明記／Q37：`updated_at`はINSERT時`DEFAULT now()`、UPDATE時は共通の`BEFORE UPDATE`トリガーで自動更新する方針（SECURITY DEFINER不要）を6章冒頭に新設／Q38：8章に「is_active_user()関数（確定）」を新設し、RLSのINSERTポリシーが`profiles.status='active'`をこの関数経由で判定する方針を明記／Q39：一般ユーザーによる`profiles`本体への直接SELECT禁止を明確化し、本人/admin/一般ユーザーの責務分離を6.1.4・8章RLS方針表に反映／Q40：管理者用RPCを`admin_set_user_role`・`admin_set_user_status`の2つに分離し、再同意RPCを`record_policy_consent()`と命名。現行規約バージョンの保存場所は既存の7章方針（アプリ側管理）のまま変更しないことを明記／Q41：`login_attempts`のメールアドレス正規化を`trim(lower(email))`相当に確定し、プロバイダ固有変換は行わない方針を8章・6.12に明記／Q42：`post-images`・`news-images`のobject keyにそれぞれ`post_id`・`news_id`を含める規則に変更し、Storage policyが親レコードのstatusを参照できるようにする方針を9章に反映／Q43：Storage5バケットをmigrationで管理する方針を9章に明記／Q44：UUID主キーは原則`DEFAULT gen_random_uuid()`とし、`profiles.id`のみ例外とする方針を6章冒頭に明記／12章の未確定事項は引き続き0件を維持 |
+| v1.14 | 2026-09-20 | Q45：現行の利用規約バージョン・現行のプライバシーポリシーバージョンをDB側の`app_settings`テーブルで一元管理する方針を確定し、6章に「6.13 app_settings」を新設（13テーブル目）。`app_settings`は一般ユーザー（anon/authenticated）による直接INSERT/UPDATE/DELETEを禁止することを確定し、8章RLS方針表に行を追加／7章「profilesの自動作成（確定）」を更新し、signup trigger時に`terms_version`・`privacy_policy_version`をクライアント申告値ではなく`app_settings`の現行バージョンから記録する方針に修正／7章「利用規約・プライバシーポリシーへの同意記録（確定）」の「アプリ側で定数・設定値として管理する」という記述を、DB側の`app_settings`を正本とする記述に修正／6.1.3の`record_policy_consent()`の説明を更新し、対象ユーザー・terms_version・privacy_policy_version・terms_agreed_at・privacy_policy_agreed_atのそれぞれの値の出典（`auth.uid()`／`app_settings`／DB側の`now()`）とクライアント非信頼の対象を明記／12章に`app_settings`のSELECT方針が未確定である旨を新たな未確定事項として追記 |
+| v1.15 | 2026-09-20 | Q46：`app_settings`はDB内部の信頼できる設定値の正本として扱い、一般クライアントから直接読み取らせない方針を確定。6.13のアクセス制御方針を更新し、anon・authenticated（adminを含む）いずれによる直接SELECTも禁止し、参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定することを明記／これらの処理で`SECURITY DEFINER`を使用する場合は既存仕様どおり`search_path`固定・必要最小限の権限とすることを明記／将来クライアント画面へ現行バージョンを表示する必要が生じても`app_settings`テーブル全体は公開せず、必要な値のみを返す安全な手段を別途設計するものとし、MVP時点では新規RPC/APIを追加しないことを明記／8章RLS方針表のapp_settings行のSELECT列を「anon/authenticated（adminを含む）いずれも不可」に更新／12章に残っていた`app_settings`のSELECT方針の未確定事項を解消し、PROJECT_SPEC.md全体を確認したうえで「現時点でMVP仕様の未確定事項はない」に更新 |
