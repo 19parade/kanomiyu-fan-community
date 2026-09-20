@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.6
+- ステータス: Draft v1.12
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -70,6 +70,7 @@
 | 16 | 利用規約 | 静的ページ。 |
 | 17 | プライバシーポリシー | 静的ページ。 |
 | 18 | コミュニティガイドライン | 静的ページ（第6章の禁止事項を反映）。 |
+| 19 | 楽曲一覧・楽曲詳細 | かのうみゆの楽曲情報を一覧・詳細表示する機能（`songs`テーブル、`/music`・`/music/[id]`・管理画面`/admin/music`）。 |
 
 ---
 
@@ -184,6 +185,8 @@ Next.js App Router構成を前提とする。
 
 命名規則: テーブル名はスネークケース複数形、主キーは `id uuid`、作成日時は `created_at`、更新日時は `updated_at` で統一する。
 
+**アカウント削除について（確定）**: MVPでは、ユーザー自身または管理者によるアカウントの完全削除（退会）機能は実装しない。これに伴い、`profiles`を参照する各テーブルのFK（`posts.author_id`、`comments.author_id`等）のON DELETEは、原則として`RESTRICT`（または`NO ACTION`）とする。アカウント削除機能を将来実装する場合は、その時点で関連コンテンツの扱い（削除・匿名化・保持等）を含めて別途設計し、必要なFK制約を見直すものとする。
+
 ### 6.1 profiles
 
 **目的**: 会員の公開プロフィール情報、ロール、アカウント状態を管理する。
@@ -193,15 +196,15 @@ Next.js App Router構成を前提とする。
 | id | uuid (PK) | `auth.users.id` を参照 |
 | username | text | 公開プロフィールURL(`/fans/[username]`)に使用する一意な識別子 |
 | display_name | text | 表示名 |
-| avatar_url | text (nullable) | Storage `avatars` バケット内画像URL |
+| avatar_url | text (nullable) | Storage `avatars` バケット内のobject key（完全URLではない。9章参照） |
 | bio | text (nullable) | 自己紹介 |
 | fan_since | date (nullable) | ファン歴（任意入力） |
 | role | text | `member` \| `admin`（デフォルト `member`） |
 | status | text | `active` \| `suspended` \| `banned`（デフォルト `active`。挙動の詳細は6.1.1参照） |
-| terms_version | text | 同意した利用規約のバージョン識別子 |
-| terms_agreed_at | timestamptz (nullable) | 利用規約に同意した日時 |
-| privacy_policy_version | text | 同意したプライバシーポリシーのバージョン識別子 |
-| privacy_policy_agreed_at | timestamptz (nullable) | プライバシーポリシーに同意した日時 |
+| terms_version | text | 同意した利用規約のバージョン識別子（必須） |
+| terms_agreed_at | timestamptz | 利用規約に同意した日時（NOT NULL。確定。6.1.3参照） |
+| privacy_policy_version | text | 同意したプライバシーポリシーのバージョン識別子（必須） |
+| privacy_policy_agreed_at | timestamptz | プライバシーポリシーに同意した日時（NOT NULL。確定。6.1.3参照） |
 | created_at | timestamptz | 作成日時 |
 | updated_at | timestamptz | 更新日時 |
 
@@ -217,7 +220,7 @@ Next.js App Router構成を前提とする。
 **username変更について（MVPでは確定・非対応）**:
 - MVPでは、ユーザー自身による`username`の変更を許可しない（サインアップ時に決定した`username`は固定とする）。
 - 理由: `username`を公開プロフィールURL(`/fans/[username]`)にそのまま使用しているため、変更を許可するとURLが変わりリンク切れ（他ユーザーが貼った/ブックマークしたリンクが無効になる）を引き起こすため。
-- `/me/edit`（プロフィール編集）では`username`を編集不可（読み取り専用）項目として扱う。RLS上のUPDATEポリシーにおいても、`username`カラムの変更は許可しない（`display_name`等の他カラムのみ更新可能とする）ことをアプリ側・DB側の両方で徹底する。
+- `/me/edit`（プロフィール編集）では`username`を編集不可（読み取り専用）項目として扱う。DB側では、`username`を6.1.3の保護対象カラムに含め、列単位のアクセス制御によって本人による直接UPDATEを禁止することで、アプリ側・DB側の両方で変更不可を保証する（6.1.3参照）。
 - 将来的にusername変更機能を追加する場合は、旧usernameから新usernameへのリダイレクト、旧URLの扱い、変更頻度制限などを含めて別途設計するものとし、MVPのスコープには含めない。
 
 #### 6.1.1 profiles.status の挙動（確定）
@@ -243,6 +246,28 @@ Next.js App Router構成を前提とする。
 - ただし、上記の確認には見落とし（確認漏れ）が生じうる。その保証されない確認作業を補う目的で「`profiles.status = 'banned'`であること」自体をSELECT時の自動非表示条件にはしない。非表示化は、あくまで管理者が個別に確認・判断した結果として`posts.status`/`comments.status`に反映されたものだけを根拠とする。
 - `suspended`が解除された場合、および将来`banned`から復旧する仕組みが実装された場合も、コンテンツ側の`status`は自動的には変更されない。個別に`hidden`/`deleted`とされたコンテンツは、その判断が別途取り消されない限りそのまま維持される。
 
+#### 6.1.3 profilesの保護カラムとアクセス制御（確定）
+
+`username`・`role`・`status`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`は、本人であっても通常の更新経路から直接変更できないよう保護する。
+
+- 本人による`UPDATE`は、上記の保護対象カラムを除いた編集可能なカラム（`display_name`・`avatar_url`・`bio`・`fan_since`等）のみに限定する。RLSの行ポリシー（8章「本人 or admin」）に加えて、列単位のアクセス制御（例: PostgreSQLの列単位GRANT/REVOKE等）を用いて、保護対象カラムへの直接UPDATEをDB側で拒否する。
+- 管理者による`role`・`status`の変更は、`SECURITY DEFINER`関数等の安全なサーバー側経路（RPC）を経由して行う。これは`is_admin()`（8章「管理者判定とRLSの循環参照回避」参照）と同様の設計思想であり、通常のUPDATE経路に対する列単位の保護を維持したまま、管理者操作を可能にするための仕組みである。
+- 利用規約・プライバシーポリシーへの再同意（`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`の更新）も、本人による直接UPDATEではなく、専用のRPC等の安全なサーバー側経路を経由して行う（7章参照）。
+- 同意そのもの（利用規約・プライバシーポリシーへの同意）は必須とする。本プロジェクトは新規構築であり、MVPでは会員登録時に利用規約・プライバシーポリシーへの同意を必須とするため、`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`はいずれも`profiles`の必須情報として扱う。特に`terms_agreed_at`・`privacy_policy_agreed_at`はNOT NULLとする（確定）。「同意日時が存在しない状態」の通常会員プロフィールは許容しない。
+- `role`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`member`/`admin`、`active`/`suspended`/`banned`（6.1参照）に強制する。新しい値を追加することはしない。
+- `username`はMVPでは変更不可（6.1「username変更について」参照）のため、`role`・`status`・`terms_*`・`privacy_policy_*`のような変更用RPCは用意しない。`/me/edit`では読み取り専用項目として扱い、アプリ側だけでなくDB側でも変更不可を保証する。既存のusername形式（`^[a-z0-9_-]{3,20}$`）およびUNIQUE制約の方針は維持する。
+- 上記の具体的な実装方法（列単位GRANT/REVOKEの文法、RPC関数の名称・引数等）は、本バージョンでは方針レベルの確定に留め、実装時に設計する。
+
+#### 6.1.4 公開プロフィールVIEW（確定）
+
+一般ユーザーが他ユーザーのプロフィールを取得する際、`profiles`本体を直接の取得元としない。RLSは行単位の制御であり、「同じ行の一部カラムだけを一般公開する」という要件をRLSだけで実現することはできないため、公開プロフィール用VIEW（例: `public_profiles`）を設ける。
+
+- `public_profiles`に含める項目（少なくとも）: `id`・`username`・`display_name`・`avatar_url`・`bio`・`fan_since`。
+- `public_profiles`に含めない項目（内部・保護情報）: `role`・`status`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`。
+- 他ユーザーのプロフィール取得（`/fans`、`/fans/[username]`等）は`public_profiles`を使用する。自分自身の情報取得・管理者による管理処理等では`profiles`本体を使用する、という責務分離を基本方針とする。
+- VIEWを作成するだけで安全とはみなさない。実装（migration設計）時には、使用するSupabase/PostgreSQLの仕様に合わせて、VIEWの権限、`security_invoker`等の必要性、underlying tableである`profiles`のRLS/権限との関係、anon/authenticatedロールから保護カラムへ直接アクセスできないことを検証したうえで実装する。
+- 具体的なVIEWのSQL定義は本バージョンでは作成せず、migration設計時に決定する。
+
 ---
 
 ### 6.2 posts
@@ -256,7 +281,7 @@ Next.js App Router構成を前提とする。
 | post_type | text | `normal` \| `live_report`（デフォルト `normal`） |
 | event_id | uuid (FK → events.id, nullable) | `live_report` の場合、対象LIVE |
 | content | text | 本文 |
-| image_url | text (nullable) | Storage `post-images` バケット内画像URL |
+| image_url | text (nullable) | Storage `post-images` バケット内のobject key（完全URLではない。9章参照） |
 | status | text | `published` \| `hidden` \| `deleted`（デフォルト `published`。論理削除を基本とし、物理削除は行わない） |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
@@ -274,6 +299,10 @@ Next.js App Router構成を前提とする。
 - 投稿が`deleted`（または`hidden`）の場合、紐づく`comments`・`likes`はDB上には保持したまま、一般ユーザーへは表示しない。投稿者本人が自分の投稿を見る場合は、紐づくコメント・いいねも合わせて確認できる。
 - ログイン中のユーザーに対しては、上記に加えて自分がブロックしたユーザーの投稿もSELECT結果から除外する（6.8 blocksの方針を参照）。
 - 投稿者の`profiles.status`（suspended/banned等）は、投稿自体の`status`に影響しない（アカウント状態とコンテンツ公開状態の関係は6.1.2を参照）。
+
+**DB制約（確定）**:
+- `post_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`normal`/`live_report`、`published`/`hidden`/`deleted`に強制する。
+- `post_type='live_report'`の場合は`event_id`を必須とするDB制約（CHECK等）を設ける。
 
 **`hidden` と `deleted` の使い分け（確定）**:
 
@@ -305,6 +334,8 @@ Next.js App Router構成を前提とする。
 **ユニーク制約**: なし。
 
 **表示制御の方針**: 6.2 posts の「status / 表示制御の方針」および「`hidden`と`deleted`の使い分け」と同様。コメント作成者本人は自分のコメントを`status`に関わらず閲覧でき、`deleted`の場合は「削除済み」と分かる表示にする。加えて、親投稿(`posts`)が一般ユーザーに非表示（`hidden`/`deleted`）の場合は、コメント自体の`status`が`published`であっても一般ユーザーには表示しない。ログイン中のユーザーに対しては、コメント投稿者を自分がブロックしている場合、そのコメントもSELECT結果から除外する。また、コメント投稿者の`profiles.status`もコメント自体の`status`に影響しない（6.1.2参照）。
+
+**DB制約（確定）**: `status`にはDB CHECK制約を設け、値の範囲を`published`/`hidden`/`deleted`に強制する。
 
 ---
 
@@ -338,7 +369,7 @@ Next.js App Router構成を前提とする。
 | venue | text | 会場名 |
 | event_date | timestamptz | 開催日時 |
 | description | text (nullable) | 詳細説明 |
-| image_url | text (nullable) | Storage `event-images` バケット内画像URL |
+| image_url | text (nullable) | Storage `event-images` バケット内のobject key（完全URLではない。9章参照） |
 | ticket_url | text (nullable) | チケット関連の外部リンク（転売防止のため公式リンクのみ想定） |
 | status | text | `upcoming` \| `ended` \| `cancelled`（デフォルト `upcoming`） |
 | created_by | uuid (FK → profiles.id) | 作成した管理者 |
@@ -348,6 +379,8 @@ Next.js App Router構成を前提とする。
 **リレーション**: `posts.event_id`, `event_participants.event_id` から参照される。
 
 **ユニーク制約**: なし。
+
+**DB制約（確定）**: `status`にはDB CHECK制約を設け、値の範囲を`upcoming`/`ended`/`cancelled`に強制する。
 
 ---
 
@@ -374,6 +407,8 @@ Next.js App Router構成を前提とする。
 - `attended`: 参加済みであることを公開してよい状態（LIVE後の実績表示等を想定）。
 - LIVE詳細ページの参加者一覧には `visibility='public'` または `'attended'` のレコードのみ表示する。`private`は本人がマイページ（`/me/events`）で確認する分にのみ表示する。
 
+**DB制約（確定）**: `status`・`visibility`にはDB CHECK制約を設け、値の範囲をそれぞれ`going`/`interested`/`cancelled`、`public`/`private`/`attended`に強制する。
+
 ---
 
 ### 6.7 reports
@@ -386,10 +421,11 @@ Next.js App Router構成を前提とする。
 | reporter_id | uuid (FK → profiles.id) | 通報者 |
 | target_type | text | `post` \| `comment` \| `user` |
 | target_id | uuid | 対象レコードのID（`target_type`に応じて `posts`/`comments`/`profiles` を参照。ポリモーフィックのためDB外部キー制約は付与しない） |
-| reason | text | 通報理由（カテゴリ） |
-| detail | text (nullable) | 詳細説明 |
+| reason | text | 通報理由（カテゴリ。DB CHECK制約で16種類に限定。下記「reasonコードの一覧（確定）」参照） |
+| detail | text (nullable) | 選択した`reason`の補足説明を記載する自由記述欄 |
 | status | text | `pending` \| `reviewing` \| `resolved` \| `rejected`（デフォルト `pending`） |
 | handled_by | uuid (FK → profiles.id, nullable) | 対応した管理者 |
+| handled_at | timestamptz (nullable) | 対応が完了した日時（`handled_by`が「誰が」対応したかを示すのに対し、`handled_at`は「いつ」対応したかを示す） |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
@@ -402,6 +438,37 @@ Next.js App Router構成を前提とする。
 - 通報者（`reporter_id`）の身元を対象ユーザーへ公開しない。`reports`テーブルのSELECTは通報者本人とadmin(`is_admin()`)のみに限定し、対象ユーザーが自分に対する通報の`reporter_id`を参照できないようにする。
 - 通報された投稿・コメントは、管理者が対応を判断するまでは通常どおり表示する（通報のみを理由に自動で`hidden`化はしない）。
 - 管理者が内容を確認した上で、必要に応じて対象の投稿・コメントを`hidden`または`deleted`に変更する等の対応を行う。この対応は`admin_logs`に記録する。
+
+**DB制約（確定）**:
+- `target_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`post`/`comment`/`user`、`pending`/`reviewing`/`resolved`/`rejected`に強制する。
+- `reason`にもDB CHECK制約を設け、値の範囲を下記「reasonコードの一覧（確定）」に記載する16種類に限定する。
+
+**reasonコードの一覧（確定）**:
+
+`reason`はDB CHECK制約により、以下16種類の値に限定する。1〜15は第10章の禁止事項15項目にそれぞれ対応し、16番目の`other`はいずれにも適切に分類できない場合の受け皿とする。
+
+| No. | 第10章の禁止事項 | reasonコード |
+|---|---|---|
+| 1 | 誹謗中傷 | `defamation` |
+| 2 | 脅迫 | `threats` |
+| 3 | 差別 | `discrimination` |
+| 4 | 嫌がらせ | `harassment` |
+| 5 | 個人情報の投稿 | `personal_info_exposure` |
+| 6 | なりすまし | `impersonation` |
+| 7 | 詐欺 | `fraud` |
+| 8 | チケット転売 | `ticket_scalping` |
+| 9 | 違法行為 | `illegal_activity` |
+| 10 | 無断転載 | `unauthorized_repost` |
+| 11 | 著作権侵害 | `copyright_infringement` |
+| 12 | 歌詞全文の掲載 | `full_lyrics_posting` |
+| 13 | 無断画像・動画の掲載 | `unauthorized_media_posting` |
+| 14 | スパム | `spam` |
+| 15 | 出会い目的のみの利用 | `dating_solicitation` |
+| 16 | （15項目に分類できない場合） | `other` |
+
+- `unauthorized_repost`（無断転載）・`copyright_infringement`（著作権侵害）・`unauthorized_media_posting`（無断画像・動画の掲載）は、実際の通報では重複して該当しうるが、第10章の構成をそのまま維持するため統合せず、独立したコードとして扱う。
+- `detail`は、選択した`reason`の補足説明を記載する自由記述欄として使用する。
+- `reason`はユーザーが通報時に選択する分類であり、法的な判断（例: 実際に著作権侵害・詐欺・違法行為等に該当するかどうかの法的評価）を意味するものではない。あくまで通報者による分類であり、最終的な事実確認・対応判断は管理者が行う。
 
 ---
 
@@ -418,7 +485,7 @@ Next.js App Router構成を前提とする。
 
 **リレーション**: `blocker_id → profiles.id`、`blocked_id → profiles.id`。
 
-**ユニーク制約**: `(blocker_id, blocked_id)` に UNIQUE。加えて `blocker_id <> blocked_id` のCHECK制約を推奨（自己ブロック防止）。
+**ユニーク制約**: `(blocker_id, blocked_id)` に UNIQUE。加えて `blocker_id <> blocked_id` のCHECK制約を設ける（確定。自己ブロック防止）。
 
 **ブロック時の挙動（確定）**:
 - ブロックした側（`blocker_id`）には、ブロックしたユーザー（`blocked_id`）の投稿・コメントを表示しない。この非表示はブロックした本人から見た場合にのみ適用する一方向の制御であり、`posts`/`comments`のSELECT側で`blocks`テーブルを参照して除外する（6.2 posts、6.3 comments参照）。
@@ -436,10 +503,10 @@ Next.js App Router構成を前提とする。
 | id | uuid (PK) | |
 | title | text | タイトル |
 | content | text | 本文 |
-| image_url | text (nullable) | 画像URL |
+| image_url | text (nullable) | Storage `news-images` バケット内のobject key（完全URLではない。9章参照） |
 | source_url | text (nullable) | 公式情報源へのリンク（任意） |
 | status | text | `draft` \| `published`（デフォルト `draft`） |
-| published_at | timestamptz | 公開日時（未来日時を設定した場合は、その日時が到来するまで一般ユーザーには公開しない） |
+| published_at | timestamptz (nullable。`status='draft'` の場合のみ) | 公開日時（未来日時を設定した場合は、その日時が到来するまで一般ユーザーには公開しない）。`status='draft'`の場合はNULLを許容し、`status='published'`の場合は必須とする |
 | created_by | uuid (FK → profiles.id) | 作成した管理者 |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
@@ -452,6 +519,10 @@ Next.js App Router構成を前提とする。
 - 一般ユーザーには `status='published'` かつ `published_at <= 現在時刻` の記事のみ表示する。
 - 管理者は `status='draft'` の記事、および `published_at` が未来の記事も `/admin/news` で閲覧・編集できる。
 
+**DB制約（確定）**:
+- `status`にはDB CHECK制約を設け、値の範囲を`draft`/`published`に強制する。
+- `status`と`published_at`の整合性（`draft`ならNULL許容、`published`なら必須）をDB制約（CHECK等）で担保する方針とする。
+
 ---
 
 ### 6.10 songs
@@ -463,7 +534,7 @@ Next.js App Router構成を前提とする。
 | id | uuid (PK) | |
 | title | text | 楽曲名 |
 | release_date | date (nullable) | リリース日 |
-| cover_image_url | text (nullable) | ジャケット画像URL |
+| cover_image_url | text (nullable) | Storage `song-images` バケット内のobject key（完全URLではない。9章参照） |
 | description | text (nullable) | 楽曲説明 |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
@@ -473,6 +544,8 @@ Next.js App Router構成を前提とする。
 **ユニーク制約**: なし。
 
 **備考（コミュニティルール反映）**: 歌詞全文の掲載は禁止事項のため、`lyrics` 等の全文格納カラムは設けない。引用する場合も短い抜粋のみを想定し、専用カラムは用意せず `description` 内での短文引用に留める運用とする。
+
+**備考（作成者の記録について・確定）**: `events`/`news`とは異なり、`created_by`（作成した管理者）列は持たない（意図的な設計。楽曲マスタの作成・変更操作は`admin_logs`の記録で十分と判断し、追跡用の列は追加しない）。
 
 ---
 
@@ -499,14 +572,45 @@ Next.js App Router構成を前提とする。
 - 記録はServer Action / Route Handler等、サーバーサイド処理からのみ行う（サーバー側でのみ書き込み権限を持たせる。クライアントSDKからのINSERTは常に拒否する）。
 - 管理者操作の監査ログであるため、一般ユーザー（管理者を含む）によるクライアント経由の改ざん・偽装記録を防止することを目的とする。
 
+**DB制約（確定）**: `action`・`target_type`はfree textとし、DB CHECK制約による固定enum化は行わない（確定。将来増える運用アクションを都度スキーマ変更せずに記録できるようにするため）。
+
+---
+
+### 6.12 login_attempts
+
+**目的**: ログイン失敗を記録し、アカウント単位のレート制限（8章「レート制限の実装方式（確定）」参照）に用いる。
+
+| カラム | 型 | 説明 |
+|---|---|---|
+| id | uuid (PK) | |
+| email | text | 試行対象のメールアドレス |
+| ip_address | inet (nullable) | 参考情報として記録するIPアドレス |
+| attempted_at | timestamptz | 失敗が発生した日時 |
+
+**リレーション**: なし。`profiles`/`auth.users`へのFKは意図的に持たせない（存在しないメールアドレスへの試行も同様に記録し、メールアドレスの存在有無を推測させないため）。
+
+**ユニーク制約**: なし。
+
+**記録方式・RLS方針**: 8章「レート制限の実装方式（確定）」の「ログイン失敗（アプリ側で制御）」を参照。
+
 ---
 
 ## 7. 認証（Supabase Auth）
 
 - Supabase Authを用いた認証を行う（メールアドレス＋パスワードを基本とする）。
-- サインアップ時に `auth.users` レコード作成後、対応する `profiles` レコードを作成する（トリガーまたはアプリケーション処理で自動生成）。
+- サインアップ時に `auth.users` レコード作成を起点として、DBトリガーで対応する `profiles` レコードを自動作成する（確定。詳細は下記「profilesの自動作成（確定）」参照）。
 - パスワード再設定は `/forgot-password` からSupabase Authの機能を利用する。
 - セッション管理はSupabaseのSSR/クライアントSDKに準拠する。
+
+### profilesの自動作成（確定）
+
+会員登録時の`profiles`作成方式は、Supabase Authによる`auth.users`作成を起点とするDBトリガー方式に確定する。
+
+- サインアップ時に必要なプロフィール情報・同意情報（少なくとも`username`・`display_name`・`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`）は、Authのユーザーメタデータ等、トリガーから参照可能な方法でクライアントから渡し、トリガーが`profiles`レコード作成時にNOT NULL項目を満たせるようにする。
+- クライアントから渡されたメタデータを無条件に信頼しない。特に`role`・`status`のような権限・アカウント状態情報は、クライアントメタデータからは設定せず、DB側で安全な初期値（`role='member'`・`status='active'`）を設定する。
+- username形式（6.1参照）、username UNIQUE制約、必須値の充足、規約への同意、現行の`terms_version`/`privacy_policy_version`との整合性については、DB/サーバー側でも必要な検証を行う。
+- 上記の目的は、`auth.users`は存在するが`profiles`が存在しない不整合状態を極力作らないことである。
+- 具体的なトリガー関数のSQL・メタデータの受け渡し方法は、本バージョンでは確定せず、migration設計時に決定する。
 
 ### 利用規約・プライバシーポリシーへの同意記録（確定）
 
@@ -514,6 +618,7 @@ Next.js App Router構成を前提とする。
 - 同様に、プライバシーポリシーへの同意を `profiles.privacy_policy_version` と `profiles.privacy_policy_agreed_at` として記録する。
 - アプリ側で「現行の利用規約バージョン」「現行のプライバシーポリシーバージョン」を定数・設定値として管理し、ログイン中のユーザーの各バージョンがそれと一致しない場合に比較できるデータ構造をMVPの時点で用意しておく。
 - 規約またはプライバシーポリシーを改定した場合に、既存ユーザーへ再同意を求めるかどうか（および求める場合のフロー）は、その改定が発生した時点で判断する。MVP時点ではバージョンを記録・比較できる状態にしておくことのみを必須要件とする。
+- 同意記録の更新（再同意処理）は、本人による直接UPDATEではなく、専用のRPC等の安全なサーバー側経路を経由して行う（6.1.3参照）。
 
 ---
 
@@ -524,16 +629,17 @@ Next.js App Router構成を前提とする。
 - **入力値バリデーション**: フォーム入力（投稿・コメント・プロフィール等）はクライアント側・サーバー側の両方でバリデーションを行う。
 - **画像アップロード制限（確定）**: 許可する形式は JPEG / PNG / WebP、最大ファイルサイズは 5MB とする。クライアント側での事前チェックに加え、サーバー側（アップロード処理・Storageポリシー）でもMIMEタイプとサイズを必ず検証し、クライアント側チェックのみに依存しない。
 - **スパム・レート制限**: 投稿・コメント・いいね・通報・ログイン試行の連続実行に対するレート制限を設ける（対象範囲・初期閾値・実装方式ともに確定。詳細は本章「レート制限の対象範囲・初期閾値（確定）」および「レート制限の実装方式（確定）」を参照）。
+- **値の整合性（確定）**: `role`/`status`/`post_type`等、列挙値を持つカラムには6章の各テーブル節に記載の通りDB CHECK制約を設け、アプリ側バリデーションのみに依存しない。
 - **秘密情報の管理**: `.env.local` 等の秘密情報はGitにコミットしない。`.gitignore` で除外を徹底する。
 
 ### RLSポリシーの基本方針（テーブル別）
 
 | テーブル | 参照(SELECT) | 作成(INSERT) | 更新/削除(UPDATE/DELETE) |
 |---|---|---|---|
-| profiles | 全員（公開情報のみ） | 本人（サインアップ時） | 本人 or admin(`is_admin()`) |
+| profiles | 本人 or admin(`is_admin()`)は`profiles`本体を全カラムSELECT可。一般ユーザーは`profiles`本体へ直接SELECTせず、公開プロフィールVIEW`public_profiles`（6.1.4参照）経由で公開情報のみ取得する | 本人（サインアップ時） | 本人（保護対象カラムを除く。6.1.3参照） or admin(`is_admin()`)（role/status等の保護対象カラムの変更は専用RPC経由。6.1.3参照） |
 | posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 投稿者本人 or admin(`is_admin()`) |
 | comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | コメント投稿者本人 or admin(`is_admin()`) |
-| likes | 親投稿が公開範囲内であれば全員、それ以外は当該投稿の投稿者本人のみ（いいねした本人ではない） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人のみ削除可 |
+| likes | 親投稿が公開範囲内であれば全員、それ以外は当該投稿の投稿者本人のみ（いいねした本人ではない） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人（自分の分のみ） or admin(`is_admin()`) が削除可 |
 | events | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | event_participants | `visibility in ('public','attended')`は全員、`private`は本人のみ、いずれも本人は常に自分の分を閲覧可 | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人 or admin(`is_admin()`) |
 | reports | 通報者本人 or admin(`is_admin()`) | ログイン済み本人（`status='active'`のユーザーのみ） | admin(`is_admin()`) のみ |
@@ -541,6 +647,7 @@ Next.js App Router構成を前提とする。
 | news | `status='published'`かつ`published_at<=now()`は全員、`draft`または未来の`published_at`はadmin(`is_admin()`)のみ | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | songs | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | admin_logs | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理（Server Action/Route Handler等）からのみ記録 | 不可（追記のみ、更新・削除禁止） |
+| login_attempts | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理からのみ記録 | 不可（クライアント直接操作不可。成功時の失敗履歴クリアもサーバーサイド処理のみ） |
 
 > 上記は方針レベルの整理であり、実装時に具体的なSQLポリシーとしてマイグレーションに落とし込む。
 
@@ -597,6 +704,11 @@ Next.js App Router構成を前提とする。
 
 - アカウント単位（メールアドレス）で5回/15分の独自レート制限を設ける。IPアドレス単位の独自制限は現時点では追加しない。
 - 独自制限はNext.jsのRoute Handler/Server Functionが`supabase.auth.signInWithPassword`呼び出しの前後で判定・記録する、アプリケーション層の処理として実装する。
+- 同一メールアドレスへの並行リクエストによるレート制限のすり抜けを防止するため、正規化したメールアドレス単位で処理を直列化する。投稿・コメント・いいね・通報と同様に`pg_advisory_xact_lock`等のDBロックを利用する方針とする（確定）。
+- 基本フローは、(1) Supabase Authでログインを試行、(2) Auth失敗を確認、(3) 正規化したメールアドレス単位でDBロックを取得、(4) ロック取得後に直近15分の失敗回数を確認、(5) 制限条件に従って失敗記録・cooldown判定を行う、という順序とする。
+- 記録は`login_attempts`（6.12参照）に対して行い、Supabase Authで認証を実行した後、認証失敗を確認してから記録する（事後記録方式）。認証実行前に`login_attempts`へ「予約」のレコードを作成する方式は採用しない。
+- ログイン成功時には、それ以前の失敗履歴（`login_attempts`の該当メールアドレスのレコード）をクリアする。
+- `login_attempts`の古いレコードに対する定期的なクリーンアップ処理は、MVPでは実装しない。
 - 独自制限は時間経過で自動的に解除される一時的なクールダウンとし、`profiles.status`の`suspended`/`banned`（6.1.1参照。運営の判断を要する恒久的な利用制限）とは完全に分離する。第三者が特定のメールアドレスを狙って連続ログイン失敗させても、それによって対象アカウントの`profiles.status`が変化することはない。
 - 上記の独自制限に加えて、Supabase Authが標準で提供するIPベースのレート制限を併用する。IP単位の防御はSupabase Auth標準機能に委ね、独自実装は行わない。
 - Supabase Authからレート制限超過（HTTP 429）が返却された場合は、アプリ側で適切にハンドリングし、独自制限に該当した場合と同様の汎用的な案内を表示する。
@@ -615,9 +727,14 @@ Next.js App Router構成を前提とする。
 | avatars | プロフィールアバター画像 | 本人のみアップロード・更新可、公開読み取り可 |
 | post-images | 投稿添付画像 | 投稿者本人のみアップロード可、公開読み取り可（`posts.status`に連動して非表示制御） |
 | event-images | LIVE告知画像 | admin のみアップロード可、公開読み取り可 |
+| news-images | ニュース記事添付画像 | admin のみアップロード可。一般ユーザーの読み取り可否はニュース本文と同じ条件（`news.status='published'`かつ`published_at<=現在時刻`）に連動。adminはdraft・予約公開・公開済みのいずれも閲覧・管理可能 |
+| song-images | 楽曲ジャケット画像 | admin のみアップロード可、公開読み取り可 |
 
 - 各バケットで許可するのは JPEG / PNG / WebP のみとし、最大ファイルサイズは 5MB とする（8章「画像アップロード制限」参照）。
 - バケットごとにStorage RLSポリシーを設定し、アップロード権限を上記の通り制限する。
+- 各バケットに対応するDBカラム（`profiles.avatar_url`、`posts.image_url`、`events.image_url`、`news.image_url`、`songs.cover_image_url`）には、Storageのobject key（バケット内の相対パス）を保存し、完全なURLは保存しない（確定。6.1/6.2/6.5/6.9/6.10参照）。表示時はアプリ側の共通処理でURLを解決する。
+- `post-images`の読み取り制御は`posts.status`と連動させ、`hidden`/`deleted`の投稿に紐づく画像を一般ユーザーが直接読み取れないようにする（確定。Storage側のアクセス制御で実現する方針）。具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時にposts.statusと安全に連動できる方法を検証する。`avatars`・`event-images`・`song-images`にはこの連動要件は無い（`profiles`/`events`/`songs`には`posts`のような非表示状態が存在しないため）。
+- `news-images`の読み取り制御は、ニュース本文（6.9「表示制御の方針」）と同一の条件に連動させる（確定）。一般ユーザーが画像を閲覧できるのは`news.status='published'`**かつ**`published_at<=現在時刻`の場合のみとし、`draft`の場合、および`status='published'`でも`published_at`が未来（予約公開）の場合は、一般ユーザーは閲覧不可でadminのみ閲覧可能とする。これは`post-images`の`posts.status`連動と同じ考え方であり、画像のobject key（または画像URL）を直接知っている一般ユーザーによる、公開前・予約公開前コンテンツの画像への事前アクセスを防ぐことを目的とする。管理者はdraft・予約公開・公開済みのいずれの状態でも画像を閲覧・管理できる。具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時に`news.status`・`published_at`と安全に連動できる方法を検証する（`post-images`と同様）。
 
 ### ファイルパスの命名規則（確定）
 
@@ -627,10 +744,12 @@ Storage RLSでアップロード先を制御できるよう、ファイルパス
 avatars/{user_id}/{uuid}.{ext}
 post-images/{user_id}/{uuid}.{ext}
 event-images/{uuid}.{ext}
+news-images/{uuid}.{ext}
+song-images/{uuid}.{ext}
 ```
 
 - `avatars`・`post-images` は先頭フォルダを `user_id`（`auth.uid()`と一致する値）とし、Storage RLSポリシーで `storage.foldername(name)[1] = auth.uid()::text` 相当の条件を用いて、他ユーザーの領域へのアップロードを禁止する。
-- `event-images` はユーザーフォルダを持たず、INSERTをadmin(`is_admin()`)のみに制限することでアクセス制御する。
+- `event-images`・`news-images`・`song-images` はユーザーフォルダを持たず、INSERTをadmin(`is_admin()`)のみに制限することでアクセス制御する（`events`/`news`/`songs`がいずれも管理者のみによる作成・更新であるため。8章のRLS方針表参照）。
 - `{ext}` はアップロード制限で許可したMIMEタイプに対応する拡張子のみを許可する。
 
 ---
@@ -677,7 +796,7 @@ event-images/{uuid}.{ext}
 
 実装着手前にChatGPT側での確定、または双方合意が必要な論点。
 
-現時点で未確定事項はない（v1.6時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
+現時点で未確定事項はない（v1.12時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
 
 ---
 
@@ -692,3 +811,9 @@ event-images/{uuid}.{ext}
 | v1.4 | 2026-09-19 | レート制限の実装方式を確定。投稿・コメント・いいね・通報はPostgreSQLの`BEFORE INSERT`トリガー＋`pg_advisory_xact_lock`によるユーザー×操作単位の直列化＋既存テーブル自身の列からのCOUNTで制御し、新規カウンターテーブルは作成しない方針を明記（RLSと異なりトリガーは呼び出し経路・ロールに関わらず発火するため、PostgREST直接アクセスや将来のservice_role経由の書き込みでもバイパスできない構造とする）／`SECURITY DEFINER`関数の`search_path`固定を明記／ログイン失敗はアカウント単位5回/15分の独自レート制限(`profiles.status`のsuspended/bannedとは分離した一時的なクールダウン)とし、IP単位の独自制限は追加せずSupabase Auth標準のIPベースレート制限(429ハンドリングを含む)を併用する方針を明記／8章に「レート制限の実装方式（確定）」を新設し、12章の未確定事項からレート制限実装方式の項目を解消 |
 | v1.5 | 2026-09-19 | `banned`ユーザー向け案内ページのルートを`/restricted`に確定し、5章に「5.6 アクセス制限時の誘導ページ（確定）」を新設（未ログイン時は`/login`へ、active/suspendedは通常ページへリダイレクト、`noindex`とする方針を含む）／`/banned`・`/account/restricted`等は不採用と明記／suspendedは全画面誘導ページを持たず、操作時のインライン汎用メッセージのみとする方針を6.1.1に明記／Next.js 16のProxy（旧Middleware）では`profiles.status`をDBに問い合わせて判定せず、banned/suspendedの判定はData Access Layer（DAL）で各page・Server Action・Route Handlerごとに行う方針を8章に「Next.js 16における認可設計（確定）」として新設／「すべてのURLをProxyで`/restricted`へ強制送致すること」は仕様上の保証にしないことを明記／12章の未確定事項からbanned案内ページのルートに関する項目を解消 |
 | v1.6 | 2026-09-19 | `profiles.status`（アカウント利用状態）と`posts.status`/`comments.status`（コンテンツ公開状態）が独立した状態管理であることを確定し、6章に「6.1.2 アカウント状態とコンテンツ公開状態の独立性（確定）」を新設。suspended/bannedになったことだけを理由に過去の投稿・コメントを自動的に非表示・削除しない方針を確定／banned処分時には管理者が過去投稿・コメントを確認し、該当があれば既存のhidden/deleted運用（admin_logs記録を含む）に従って個別対応する運用を明記／確認漏れの可能性を踏まえ、`profiles.status = 'banned'`であること自体をSELECT時の自動非表示条件にはしない設計思想を明記／suspended解除・将来のbanned復旧時もコンテンツ側のstatusは自動変更されないことを明記／6.2 posts・6.3 commentsに、投稿者・コメント投稿者の`profiles.status`が各コンテンツの`status`に影響しないことを追記／10章に、banned処分時の過去コンテンツ確認でも禁止事項を判断基準として用いる旨を追記／12章の未確定事項を解消（残存項目なし） |
+| v1.7 | 2026-09-20 | DB設計レビューQ1〜Q25の確定事項を反映。6章に「6.1.3 profilesの保護カラムとアクセス制御（確定）」を新設し、role/status/terms_*/privacy_policy_*等の保護対象カラムへの本人による直接UPDATEを禁止し、管理者操作・再同意処理は専用RPC等の安全なサーバー側経路を経由する方針を確定／アカウント完全削除（退会）をMVP対象外と明記し、profilesを参照する各FKのON DELETEは原則RESTRICT（NO ACTION）とする方針を6章冒頭に追記／6章に「6.12 login_attempts」を新設（email/ip_address/attempted_at、profilesへのFKは持たせない）し、8章のログイン失敗節に事後記録方式（予約方式は不採用）・成功時の失敗履歴クリア・クリーンアップ処理は実装しない旨を追記／role・status・post_type・events.status・event_participants.status・visibility・reports.target_type・status・news.statusにDB CHECK制約を設ける方針を各テーブル節に追記（許容値は既存v1.6の記載値のまま変更なし）／reports.reasonにもCHECK制約を設ける方針としつつ具体的なコード値は未確定として12章に記載／posts.post_type='live_report'時にevent_idを必須とする制約、blocksの自己ブロック禁止CHECK（推奨から確定へ）、news.published_atのdraft時NULL許容・published時必須の整合性制約を追記／reports.handled_at（対応完了日時）を追加、songs.created_byは追加しないことを明記／likesのRLS方針にadmin(`is_admin()`)による削除権限を追加／avatar_url・posts.image_url・events.image_urlがStorageのobject key（完全URLではない）を保存することを明記し、9章にpost-imagesの読み取り制御をposts.statusと連動させる方針（具体的なRLS実装方法は実装時に検証）を追記／profiles.discovery_source・favorite_song・prefecture、events.city・official_url、reports.descriptionは追加しないことを確認（12章の新たな未確定事項として、reports.reasonのコード値、news/songsの画像用Storageバケット未定義、terms_agreed_at等のNOT NULL/nullable最終判断を追記） |
+| v1.8 | 2026-09-20 | `reports.reason`のDB CHECK制約に用いる具体的なコード値を確定し、6.7に「reasonコードの一覧（確定）」を新設。第10章の禁止事項15項目に対応する15コード（`defamation`/`threats`/`discrimination`/`harassment`/`personal_info_exposure`/`impersonation`/`fraud`/`ticket_scalping`/`illegal_activity`/`unauthorized_repost`/`copyright_infringement`/`full_lyrics_posting`/`unauthorized_media_posting`/`spam`/`dating_solicitation`）に加え、15項目に分類できない場合の受け皿として16番目のコード`other`を追加し、計16種類にreasonを限定する方針を確定／`unauthorized_repost`・`copyright_infringement`・`unauthorized_media_posting`（無断転載・著作権侵害・無断画像動画の掲載）は実際の通報では重複しうるが、第10章の構成を維持し統合せず独立コードとして扱うことを明記／`reports.detail`はreasonの補足説明を記載する自由記述欄であることを明記／`reason`はユーザーによる通報時の分類であり法的判断を意味しないことを明記／12章の未確定事項から`reports.reason`のコード値未確定の項目を解消 |
+| v1.9 | 2026-09-20 | Q27：Storage専用バケット`news-images`・`song-images`の追加を確定。9章のバケット一覧に両バケットを追加し、いずれもadminのみアップロード可・ユーザーフォルダを持たない（`event-images`と同じパターン）ことを明記／ファイルパス命名規則に`news-images/{uuid}.{ext}`・`song-images/{uuid}.{ext}`を追加／6.9 news.image_url・6.10 songs.cover_image_urlを、それぞれ`news-images`・`song-images`バケット内のobject key（完全URLではない）を保存する旨に更新／`song-images`は`songs`に非公開状態が存在しないため`avatars`/`event-images`と同様に公開読み取り可と確定したが、`news-images`は`news`にdraft/published状態が存在するため読み取り方針（`news.status`と連動させるか無条件で公開とするか）を現行仕様からは判断できず、12章の未確定事項として新たに記載／12章から「news/songsの画像用Storageバケット未定義」の項目を解消（news-imagesの読み取り方針という、より具体的な論点に置き換え） |
+| v1.10 | 2026-09-20 | Q28：`news-images`の読み取り可否を`news.status`と連動させる方針を確定。`news.status='published'`では一般ユーザーも画像を閲覧可能、`news.status='draft'`では一般ユーザーは閲覧不可でadminのみ閲覧可能とすることを9章のバケット一覧・読み取り制御の記述に反映（`post-images`の`posts.status`連動と同じ考え方で、公開前コンテンツの画像漏洩を防ぐことが目的）／具体的なStorage RLSの実装方法は本バージョンでは決定せず、実装時に検証する旨を明記／12章の未確定事項から`news-images`の読み取り方針の項目を解消 |
+| v1.11 | 2026-09-20 | Q29：`profiles.terms_agreed_at`・`privacy_policy_agreed_at`をNOT NULLとする方針を確定。本プロジェクトが新規構築であり、MVPでは会員登録時に利用規約・プライバシーポリシーへの同意を必須とするため、「同意日時が存在しない状態」の通常会員プロフィールを許容しないことを6.1・6.1.3に反映／`terms_version`・`terms_agreed_at`・`privacy_policy_version`・`privacy_policy_agreed_at`をprofilesの必須情報として明記／再同意は専用RPC経由、本人による直接UPDATE禁止という既存方針（6.1.3）は変更なし／12章の未確定事項を解消（残存項目なし） |
+| v1.12 | 2026-09-20 | 最終整合性レビューのA-1〜A-2・B-1〜B-4を踏まえ、Q30〜Q35を反映。Q30：6.1に「6.1.4 公開プロフィールVIEW（確定）」を新設し、一般ユーザー向けの他者プロフィール取得は`public_profiles`VIEW（公開情報のみ）経由とし、`profiles`本体への直接SELECTは本人・adminに限定する方針を確定、8章RLS方針表のprofiles行を更新／Q31：`news-images`の一般読み取り条件をニュース本文と完全に一致させ（`news.status='published'`かつ`published_at<=現在時刻`）、予約公開中の画像事前漏洩を防止する記述に9章を更新／Q32：会員登録時の`profiles`作成をDBトリガー方式に確定し、7章に「profilesの自動作成（確定）」を新設。ユーザーメタデータ経由での必須情報受け渡し、role/statusをクライアントメタデータから設定しない方針、各種検証方針を明記／Q33：`login_attempts`の判定・記録にも`pg_advisory_xact_lock`等によるメールアドレス単位の並行処理対策を導入する方針を8章に追記／Q34：`username`を6.1.3の保護対象カラムに統合し、username変更用RPCは作成しない方針を明記／Q35：3章のMVP機能一覧に「楽曲一覧・楽曲詳細」を追加し18項目→19項目に更新／12章の未確定事項は引き続き0件を維持 |
