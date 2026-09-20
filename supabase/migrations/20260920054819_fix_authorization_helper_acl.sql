@@ -1,0 +1,32 @@
+-- =============================================================================
+-- 20260920054819_fix_authorization_helper_acl.sql
+-- PROJECT_SPEC.md v1.16 準拠 - authorization helpersのACL補正
+--
+-- 背景:
+--   20260920052609_authorization_helpers.sql（002）で作成した
+--   public.is_admin() / public.is_active_user() について、
+--   remote database上のcatalog調査（pg_default_acl）により、
+--   `public`スキーマのfunctionに対するdefault privileges（所有者postgres・
+--   supabase_admin）が、新規関数作成時にanon/authenticated/postgres/
+--   service_roleへEXECUTEを直接付与することが判明した。
+--
+--   002の`revoke execute ... from public`はPUBLIC疑似ロールへの権限のみを
+--   取り消すものであり、anon・service_roleへの直接付与には影響しなかった。
+--
+-- 本migrationの方針:
+--   - ALTER DEFAULT PRIVILEGESは変更しない（Supabase側の既定動作はそのまま）。
+--   - is_admin() / is_active_user() の2関数についてのみ、個別に
+--     anonへの直接EXECUTEをREVOKEする。
+--   - service_role（Supabase default privilegeによる付与）はそのまま維持し、
+--     このmigrationからも明示的なREVOKE/GRANTは行わない。
+--   - authenticatedへの再GRANTは行わない（002で既にGRANT済みのため不要）。
+--   - PUBLICへの変更も行わない（002で既にREVOKE済みのため不要）。
+--   - owner（postgres）のACLも変更しない。
+--   - 関数本体・関数の再作成は行わない。
+--
+-- 001（20260920022832_core_schema.sql）・002（20260920052609_authorization_helpers.sql）
+-- はいずれも変更しない。
+-- =============================================================================
+
+revoke execute on function public.is_admin() from anon;
+revoke execute on function public.is_active_user() from anon;
