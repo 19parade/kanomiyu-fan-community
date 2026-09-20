@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.15
+- ステータス: Draft v1.16
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -187,9 +187,11 @@ Next.js App Router構成を前提とする。
 
 **UUID主キーの生成方針（確定）**: UUID型の主キーを持つテーブルでは、原則としてDB側で`DEFAULT gen_random_uuid()`を使用する。ただし`profiles.id`は例外とし、`auth.users.id`をそのまま使用するため、独自のDEFAULT UUID生成は設定しない（6.1参照）。`gen_random_uuid()`が対象Supabase環境で標準利用可能かはmigration実装時に確認し、利用可能な場合は不要な拡張機能の有効化を追加しない。明示的な`pgcrypto`有効化が必要な場合のみ、Supabaseの現行推奨方法に従って有効化する。
 
-**updated_atの自動更新（確定）**: `updated_at`列を持つテーブルでは、INSERT時は`DEFAULT now()`、UPDATE時は共通の`BEFORE UPDATE`トリガー関数によって`updated_at = now()`を自動設定する。クライアントに`updated_at`の値を指定・管理させない。この共通トリガー関数は`NEW.updated_at`を書き換えるだけの単純な用途であり、`SECURITY DEFINER`にする必要は原則ない。対象テーブルごとに同じ関数を再利用する。具体的なSQLはmigration実装時に決定する。
+**updated_atの自動更新（確定）**: `updated_at`列を持つテーブル（`app_settings`を含む。6.13参照）では、INSERT時は`DEFAULT now()`、UPDATE時は共通の`BEFORE UPDATE`トリガー関数によって`updated_at = now()`を自動設定する。クライアントに`updated_at`の値を指定・管理させない。この共通トリガー関数は`NEW.updated_at`を書き換えるだけの単純な用途であり、`SECURITY DEFINER`にする必要は原則ない。対象テーブルごとに同じ関数を再利用する。具体的なSQLはmigration実装時に決定する。
 
 **アカウント削除について（確定）**: MVPでは、ユーザー自身または管理者によるアカウントの完全削除（退会）機能は実装しない。これに伴い、`profiles`を参照する各テーブルのFK（`posts.author_id`、`comments.author_id`等）のON DELETEは、原則として`RESTRICT`（または`NO ACTION`）とする。`profiles.id → auth.users.id`のFKについても同様にON DELETE RESTRICT（またはNO ACTION）とする。`profiles.id`と`auth.users.id`は1対1で対応し、`profiles.id`に独自のUUIDを生成することはしない（上記UUID主キーの生成方針、6.1参照）。このクロススキーマFKがSupabase実環境で正常に作成・機能するかは、migration実装時の検証項目とする。アカウント削除機能を将来実装する場合は、その時点で関連コンテンツの扱い（削除・匿名化・保持等）を含めて別途設計し、必要なFK制約を見直すものとする。
+
+**その他のFKのON DELETE方針（確定）**: `posts.event_id → events.id`、`comments.post_id → posts.id`、`likes.post_id → posts.id`、`event_participants.event_id → events.id`の4つのFKについても、`ON DELETE RESTRICT`を明示する（確定）。MVPではこれらの関連データを親レコード削除時にCASCADEで物理削除しない。上記の`profiles`参照FKにおける`ON DELETE RESTRICT`（またはNO ACTION）方針と整合させる。
 
 ### 6.1 profiles
 
@@ -299,7 +301,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-**リレーション**: `author_id → profiles.id`、`event_id → events.id`（任意）。`comments.post_id`, `likes.post_id` から参照される。
+**リレーション**: `author_id → profiles.id`、`event_id → events.id`（任意。ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）。`comments.post_id`, `likes.post_id` から参照される。
 
 **ユニーク制約**: なし。
 
@@ -342,7 +344,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-**リレーション**: `post_id → posts.id`、`author_id → profiles.id`。
+**リレーション**: `post_id → posts.id`（ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）、`author_id → profiles.id`。
 
 **ユニーク制約**: なし。
 
@@ -363,7 +365,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | user_id | uuid (FK → profiles.id) | いいねしたユーザー |
 | created_at | timestamptz | |
 
-**リレーション**: `post_id → posts.id`、`user_id → profiles.id`。
+**リレーション**: `post_id → posts.id`（ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）、`user_id → profiles.id`。
 
 **ユニーク制約**: `(post_id, user_id)` に UNIQUE（多重いいね防止）。
 
@@ -410,7 +412,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | visibility | text | `public` \| `private` \| `attended`（デフォルト `public`） |
 | created_at | timestamptz | |
 
-**リレーション**: `event_id → events.id`、`user_id → profiles.id`。
+**リレーション**: `event_id → events.id`（ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）、`user_id → profiles.id`。
 
 **ユニーク制約**: `(event_id, user_id)` に UNIQUE（1ユーザー1LIVEにつき1レコード、状態変更はUPDATEで行う）。
 
@@ -612,15 +614,23 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 
 **目的**: 現行の利用規約バージョン・現行のプライバシーポリシーバージョンをはじめとする、アプリケーション全体の設定値をDB側で一元管理する（確定。Q45）。アプリケーション側の定数を正本とせず、本テーブルを正本とする。
 
-**保持する設定値（少なくとも）**:
-- 現在の利用規約バージョン
-- 現在のプライバシーポリシーバージョン
+**構造（確定。Q47）**: `app_settings`はkey-value方式ではなく、固定カラム・単一行方式とする。
 
-具体的なカラム構造・型・初期値は、本バージョンでは確定せず、migration設計時に既存仕様との整合を確認して決定する。
+| カラム | 型 | 説明 |
+|---|---|---|
+| id | 固定値方式 | 単一行であることをDB制約で保証するための識別列。具体的なSQL表現（例: 固定値のPRIMARY KEY等）はmigration実装時に決定してよいが、複数行を作成できる設計にはしない |
+| current_terms_version | text | NOT NULL。現在の利用規約バージョン。初期値`'1.0'`（確定。Q49） |
+| current_privacy_policy_version | text | NOT NULL。現在のプライバシーポリシーバージョン。初期値`'1.0'`（確定。Q49） |
+| updated_at | timestamptz | NOT NULL DEFAULT `now()`。6章冒頭の共通`BEFORE UPDATE`トリガー（確定。Q37）の対象とする |
+
+- `app_settings`は1行のみ存在する設定テーブルとする（確定）。DB制約によって1行しか存在できないことを保証する。
+- `current_terms_version`・`current_privacy_policy_version`はいずれも`text`型とし、数値型ではなく文字列として扱う（確定）。
+- 利用規約とプライバシーポリシーのバージョンは、それぞれ独立して変更可能とする（確定）。例: termsが`1.0`→`1.1`、privacyが`1.0`→`1.1`→`1.2`のように、両方を同時に更新する必要はない。
+- 初回migrationで作成する単一レコードの初期値は、`current_terms_version = '1.0'`・`current_privacy_policy_version = '1.0'`とする（確定。Q49）。
 
 **リレーション**: なし（独立した設定用テーブル）。
 
-**ユニーク制約**: 本バージョンでは確定しない（migration設計時に決定）。
+**ユニーク制約**: なし（1行のみという制約自体は、上記の単一行保証の仕組みで担保する。具体的なSQL表現はmigration実装時に決定する）。
 
 **アクセス制御方針（確定）**:
 - `app_settings`はDB内部の信頼できる設定値の正本として扱い、一般クライアントから直接読み取らせない（確定。Q46）。
@@ -852,7 +862,7 @@ song-images/{uuid}.{ext}
 
 実装着手前にChatGPT側での確定、または双方合意が必要な論点。
 
-現時点でMVP仕様の未確定事項はない（v1.15時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
+現時点でMVP仕様の未確定事項はない（v1.16時点ですべて確定済み）。今後、新たな設計判断が必要な論点が生じた場合は本章に追記する。
 
 ---
 
@@ -876,3 +886,4 @@ song-images/{uuid}.{ext}
 | v1.13 | 2026-09-20 | DB migration実装計画レビューで確定したQ36〜Q44を反映。Q36：`profiles.id → auth.users.id`が1対1のFKであり独自UUIDを生成しないことを6.1・6章冒頭に明記／Q37：`updated_at`はINSERT時`DEFAULT now()`、UPDATE時は共通の`BEFORE UPDATE`トリガーで自動更新する方針（SECURITY DEFINER不要）を6章冒頭に新設／Q38：8章に「is_active_user()関数（確定）」を新設し、RLSのINSERTポリシーが`profiles.status='active'`をこの関数経由で判定する方針を明記／Q39：一般ユーザーによる`profiles`本体への直接SELECT禁止を明確化し、本人/admin/一般ユーザーの責務分離を6.1.4・8章RLS方針表に反映／Q40：管理者用RPCを`admin_set_user_role`・`admin_set_user_status`の2つに分離し、再同意RPCを`record_policy_consent()`と命名。現行規約バージョンの保存場所は既存の7章方針（アプリ側管理）のまま変更しないことを明記／Q41：`login_attempts`のメールアドレス正規化を`trim(lower(email))`相当に確定し、プロバイダ固有変換は行わない方針を8章・6.12に明記／Q42：`post-images`・`news-images`のobject keyにそれぞれ`post_id`・`news_id`を含める規則に変更し、Storage policyが親レコードのstatusを参照できるようにする方針を9章に反映／Q43：Storage5バケットをmigrationで管理する方針を9章に明記／Q44：UUID主キーは原則`DEFAULT gen_random_uuid()`とし、`profiles.id`のみ例外とする方針を6章冒頭に明記／12章の未確定事項は引き続き0件を維持 |
 | v1.14 | 2026-09-20 | Q45：現行の利用規約バージョン・現行のプライバシーポリシーバージョンをDB側の`app_settings`テーブルで一元管理する方針を確定し、6章に「6.13 app_settings」を新設（13テーブル目）。`app_settings`は一般ユーザー（anon/authenticated）による直接INSERT/UPDATE/DELETEを禁止することを確定し、8章RLS方針表に行を追加／7章「profilesの自動作成（確定）」を更新し、signup trigger時に`terms_version`・`privacy_policy_version`をクライアント申告値ではなく`app_settings`の現行バージョンから記録する方針に修正／7章「利用規約・プライバシーポリシーへの同意記録（確定）」の「アプリ側で定数・設定値として管理する」という記述を、DB側の`app_settings`を正本とする記述に修正／6.1.3の`record_policy_consent()`の説明を更新し、対象ユーザー・terms_version・privacy_policy_version・terms_agreed_at・privacy_policy_agreed_atのそれぞれの値の出典（`auth.uid()`／`app_settings`／DB側の`now()`）とクライアント非信頼の対象を明記／12章に`app_settings`のSELECT方針が未確定である旨を新たな未確定事項として追記 |
 | v1.15 | 2026-09-20 | Q46：`app_settings`はDB内部の信頼できる設定値の正本として扱い、一般クライアントから直接読み取らせない方針を確定。6.13のアクセス制御方針を更新し、anon・authenticated（adminを含む）いずれによる直接SELECTも禁止し、参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定することを明記／これらの処理で`SECURITY DEFINER`を使用する場合は既存仕様どおり`search_path`固定・必要最小限の権限とすることを明記／将来クライアント画面へ現行バージョンを表示する必要が生じても`app_settings`テーブル全体は公開せず、必要な値のみを返す安全な手段を別途設計するものとし、MVP時点では新規RPC/APIを追加しないことを明記／8章RLS方針表のapp_settings行のSELECT列を「anon/authenticated（adminを含む）いずれも不可」に更新／12章に残っていた`app_settings`のSELECT方針の未確定事項を解消し、PROJECT_SPEC.md全体を確認したうえで「現時点でMVP仕様の未確定事項はない」に更新 |
+| v1.16 | 2026-09-20 | Q47：`app_settings`をkey-value方式ではなく固定カラム・単一行方式に確定し、6.13に`id`（単一行保証用）・`current_terms_version`（text NOT NULL）・`current_privacy_policy_version`（text NOT NULL）・`updated_at`（Q37の共通トリガー対象）の構造を明記。バージョン値はtext型とし、利用規約とプライバシーポリシーは独立して変更可能であることを明記／Q48：`posts.event_id`・`comments.post_id`・`likes.post_id`・`event_participants.event_id`の4つのFKについて`ON DELETE RESTRICT`を確定し、6章冒頭に「その他のFKのON DELETE方針（確定）」を新設。各テーブルのリレーション説明にも反映し、profiles参照FKのRESTRICT方針と整合させる／Q49：`app_settings`の初期値を`current_terms_version='1.0'`・`current_privacy_policy_version='1.0'`（いずれもtext値）に確定し、6.13に反映／6章冒頭のupdated_at自動更新方針の説明に`app_settings`が対象テーブルに含まれることを明記／12章の未確定事項は引き続き0件を維持 |
