@@ -448,28 +448,57 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 |---|---|---|
 | id | uuid (PK) | |
 | reporter_id | uuid (FK → profiles.id) | 通報者 |
-| target_type | text | `post` \| `comment` \| `user` |
-| target_id | uuid | 対象レコードのID（`target_type`に応じて `posts`/`comments`/`profiles` を参照。ポリモーフィックのためDB外部キー制約は付与しない） |
+| target_type | text | `post` \| `comment` \| `profile`（DB CHECK制約の実値。ユーザー通報は`profile`として保存する） |
+| target_id | uuid | 対象レコードのID（`target_type`に応じて `posts`/`comments`/`profiles` を参照。ポリモーフィックのためDB外部キー制約は付与しない。実在確認は新規通報時の検証経路で行う。下記「通報の作成・閲覧・処理（確定）」参照） |
 | reason | text | 通報理由（カテゴリ。DB CHECK制約で16種類に限定。下記「reasonコードの一覧（確定）」参照） |
-| detail | text (nullable) | 選択した`reason`の補足説明を記載する自由記述欄 |
+| detail | text (nullable) | 選択した`reason`の補足説明を記載する自由記述欄（trim後最大2000文字。空文字・空白のみはNULLとして扱う。確定仕様だが現DBには長さ制約が未実装。保証方法は実装設計で決定する） |
 | status | text | `pending` \| `reviewing` \| `resolved` \| `rejected`（デフォルト `pending`） |
 | handled_by | uuid (FK → profiles.id, nullable) | 対応した管理者 |
 | handled_at | timestamptz (nullable) | 対応が完了した日時（`handled_by`が「誰が」対応したかを示すのに対し、`handled_at`は「いつ」対応したかを示す） |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-**リレーション**: `reporter_id → profiles.id`、`handled_by → profiles.id`。`target_id` はアプリケーション側で `target_type` に応じて解決する。
+**リレーション**: `reporter_id → profiles.id`、`handled_by → profiles.id`（いずれもON DELETE RESTRICT）。`target_id` は`target_type`に応じて`posts`/`comments`/`profiles`を指すが、DB外部キーは持たない。
 
 **ユニーク制約**: `(reporter_id, target_type, target_id)` に UNIQUE。同一ユーザーによる同一対象への重複通報は原則禁止とし、DB側で防止する。アプリ側は重複INSERT時に「既に通報済みです」等のエラーとしてハンドリングする。
 
 **通報時の挙動（確定）**:
 - 通報されたことを対象ユーザー（`target_id`が指すユーザー、または投稿・コメントの作成者）へ通知しない。
-- 通報者（`reporter_id`）の身元を対象ユーザーへ公開しない。`reports`テーブルのSELECTは通報者本人とadmin(`is_admin()`)のみに限定し、対象ユーザーが自分に対する通報の`reporter_id`を参照できないようにする。
+- 通報者（`reporter_id`）の身元を対象ユーザーへ公開しない。`reports`の内容を閲覧できるのは通報者本人（専用RPC経由。下記参照）とadmin(`is_admin()`)のみとし、対象ユーザー・第三者は一切閲覧できない（`reporter_id`・`reason`・`detail`・`status`を含む）。
 - 通報された投稿・コメントは、管理者が対応を判断するまでは通常どおり表示する（通報のみを理由に自動で`hidden`化はしない）。
 - 管理者が内容を確認した上で、必要に応じて対象の投稿・コメントを`moderate_post()`/`moderate_comment()`経由で`hidden`に変更する等の対応を行う（管理者は`deleted`へ変更できない。6.2/6.3参照）。この対応は`admin_logs`に記録する。
 
 **DB制約（確定）**:
-- `target_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`post`/`comment`/`user`、`pending`/`reviewing`/`resolved`/`rejected`に強制する。
+- `target_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`profile`/`post`/`comment`、`pending`/`reviewing`/`resolved`/`rejected`に強制する（`status`のデフォルトは`pending`）。
+
+**通報の作成・閲覧・処理（確定。DB実装は後続フェーズ。RLS・RPC・triggerはいずれも現時点で未実装）**:
+
+*新規通報（作成）*
+- 新規通報できるのは、ログイン済みで`is_active_user()`がtrueの本人（`reporter_id = auth.uid()`）のみ。anon・suspended・bannedは新規通報不可。
+- 自分自身への通報（自分の投稿・コメント・プロフィール）は禁止する。
+- 存在しない`target_id`は受理しない。新規通報時に`target_type`に応じて`posts`/`comments`/`profiles`の実在を検証する（外部キーは追加せず、検証経路で保証する）。
+- post通報は、通報者から現在fan-facingで閲覧可能な`published`の投稿のみ対象とする。comment通報は、通報者から現在fan-facingで閲覧可能な`published`のコメントかつ親投稿が`published`のもののみ対象とする。hidden/deletedの投稿・コメントへの新規通報は不可。
+- block判定は6.2/6.3のfan-facing visibilityに従う。通報者が対象の作成者をブロックしていて対象が見えない場合は新規通報不可。対象の作成者から通報者へのreverse-only blockや第三者間のblockは新規通報を妨げない。block前に提出済みの通報は保持する。
+- profile通報はMVP対象とする。他人のprofileを通常ユーザーが直接参照できない（6.1.4）ため、profile通報の作成には安全な検証経路（SECURITY DEFINER等）を要する。最低限、対象profileの実在・自己通報でないこと・通報者がactiveであることを検証する。profileの`status`（active/suspended/banned）別に新規通報可否を分けるかは**未確定**（後続設計で決定）。
+- 同一reporterによる同一対象への重複通報は禁止（`reason`を変えた再通報も不可）。既存の通報を編集して再利用する仕様は設けない。
+- 通報作成は`reports`へのクライアント直接INSERTを前提としない。後続設計で対象種別ごとの検証を含む作成経路（RPC等）を確定する。既存のレート制限（8章。通報5回/10分、BEFORE INSERT trigger）は維持する（trigger未実装）。
+
+*閲覧*
+- 通報者本人は、`reports`本体へ直接SELECTしない。自分の通報履歴・状態は専用のSECURITY DEFINER RPC（名称・signatureは後続設計で確定）で確認する。返却対象は`id`・`target_type`・`target_id`・`reason`・`detail`・`status`・`created_at`・`updated_at`・`handled_at`で、`reporter_id = auth.uid()`の行のみを返す。対応した管理者を示す`handled_by`は通報者へ返さない。
+- 通報者は、その後`suspended`/`banned`になっても、既存の自分の通報をこのRPCで確認できる（新規通報は不可）。認証主体とprofileの整合が失われた異常状態はfail closedとする。
+- active admin（`is_admin()`）のみ、moderation用途として`reports`本体をSELECTでき、`reporter_id`・`reason`・`detail`・`status`・`handled_by`・`handled_at`を含む全体を閲覧できる。suspended/bannedのadminは不可。
+- 対象ユーザー（投稿者・コメント投稿者・被通報プロフィール本人）・第三者・anonは、`reports`を閲覧できない。一般authenticatedへのSELECT権限は与えない。
+
+*更新・取消*
+- 通報者は、提出後の`reason`・`detail`・`target_type`・`target_id`・`status`・`handled_by`・`handled_at`のいずれも変更できない。通報の取消・削除もMVPでは行えない（誤通報も含めmoderation queue上の記録として保持する）。
+- 管理者による通報の処理（`status`・`handled_by`・`handled_at`の変更）は、`reports`へのdirect UPDATEではなく専用のSECURITY DEFINER RPC（名称・signatureは後続設計で確定）経由に限定し、active adminのみ実行できる。`handled_by`は`auth.uid()`からサーバー側で設定し、`handled_by`・`handled_at`をクライアントから指定させない。通常運用では物理DELETEは行わず、`status`で管理する。
+- 通報処理は`admin_logs`へ記録し、`status`・`handled_by`・`handled_at`の変更と`admin_logs`へのINSERTを同一トランザクションでatomicに行う（片方だけが成立する状態を作らない。6.11参照）。
+- `status`の具体的な遷移規則（例: `pending`→`reviewing`→`resolved`/`rejected`のどこまでを許可するか、`handled_at`の設定・クリア規則）は**未確定**であり、通報処理RPCの設計フェーズで確定する。
+
+*対象のmoderationとの分離*
+- 通報の処理（`status`の変更）だけでは、対象の投稿・コメントを自動的に`hidden`/`deleted`にしない。対象のmoderationが必要な場合は、既存の`moderate_post()`/`moderate_comment()`を別操作として使用する（これらは変更しない）。
+- profile通報を処理しただけでは、対象ユーザーの`profiles.status`（suspended/banned）を自動変更しない。ユーザーstatusの変更は通報workflowとは別責務（6.1.3の管理者用RPC等で別途設計する）。
+- 通報作成後に、対象の投稿・コメント・プロフィールの状態が変化しても、または通報者が`suspended`/`banned`になっても、通報の記録は保持する（自動削除しない）。
 - `reason`にもDB CHECK制約を設け、値の範囲を下記「reasonコードの一覧（確定）」に記載する16種類に限定する。
 
 **reasonコードの一覧（確定）**:
@@ -599,6 +628,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 **書き込み経路の方針（確定）**:
 - `admin_logs`へのINSERTをクライアントから直接許可するRLSポリシーは作成しない。active admin自身であっても、`admin_logs`への直接INSERT/UPDATE/DELETEは許可しない（追記のみ・改ざん不可の監査ログとする。UPDATE/DELETEのpolicy自体を作成しない）。
 - 投稿・コメントのモデレーションに伴う`admin_logs`への記録は、`moderate_post()`/`moderate_comment()`という、それぞれ`owner=postgres`のSECURITY DEFINER RPC内部でのみ行う（6.2/6.3参照）。これらのRPCは、呼び出し元が`is_admin()`（`role='admin'`かつ`status='active'`）であることを確認したうえで、対象の`posts.status`/`comments.status`変更と`admin_logs`へのINSERTを同一トランザクション内でatomicに実行する。ログ記録が失敗した場合はstatus変更もロールバックされ、status変更が失敗した場合はログも残らない（片方だけが成立する状態を作らない）。
+- 通報（`reports`）の処理に伴う`admin_logs`への記録も同様に、専用のSECURITY DEFINER RPC内部で、`reports`の`status`/`handled_by`/`handled_at`の変更とatomicに行う（6.7参照。未実装）。
 - 将来実装するServer Action / Route Handler等のアプリケーション層は、`admin_logs`へ直接INSERTしない。これらはモデレーション要求を受け付け、`moderate_post()`/`moderate_comment()`を呼び出す経路としてのみ機能する（最終的なauthorizationとatomicityの強制はDB側RPCが担い、アプリケーション層はこれを代替しない）。
 - `detail`には`from_status`・`to_status`・任意の`reason`（前後空白をtrimし、空文字/空白のみはNULLとして省略、最大500文字）等、必要最小限の情報のみを記録する。投稿・コメントの本文全文、`email`、IPアドレス、認証token、secret、passwordその他不要な個人情報は記録しない。
 - 管理者操作の監査ログであるため、一般ユーザー（管理者を含む）によるクライアント経由の改ざん・偽装記録を防止することを目的とする。
@@ -708,7 +738,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | likes | fan-facingでは親投稿が公開範囲内の場合のみ全員が閲覧可。それとは独立して、いいねをした本人（`user_id=auth.uid()`）は親投稿の`status`/visibilityや自身の`profiles.status`に関わらず自分のlike行のみ常にSELECT可（6.4参照。投稿者本人への他人likes閲覧の特別権限はなし） | ログイン済みactive本人（`status='active'`のユーザーのみ、`user_id=auth.uid()`、親投稿がfan-facingで閲覧可能な`published`の場合のみ） | 本人（自分の分のみ、`user_id=auth.uid()`）が物理DELETE可。親投稿の`status`/visibilityや本人の`profiles.status`に関わらず削除可（unlike）。他人のlikeは本人以外（adminを含め）削除不可。UPDATE不可 |
 | events | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | event_participants | `visibility in ('public','attended')`は全員、`private`は本人のみ、いずれも本人は常に自分の分を閲覧可 | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人 or admin(`is_admin()`) |
-| reports | 通報者本人 or admin(`is_admin()`) | ログイン済み本人（`status='active'`のユーザーのみ） | admin(`is_admin()`) のみ |
+| reports | admin(`is_admin()`)のみ`reports`本体をSELECT可（moderation用途）。通報者本人は本体へ直接SELECTせず、専用RPCで自分の通報のみ確認（`handled_by`は返さない）。対象ユーザー・第三者・anonは不可（6.7参照。RLS/RPCは未実装） | ログイン済みactive本人のみ（`reporter_id=auth.uid()`、自己通報不可、fan-facingで閲覧可能な対象のみ、存在確認あり）。クライアントからの`reports`直接INSERTを前提とせず、検証を含む作成経路を後続設計で確定する | クライアントからの直接UPDATE/DELETEは不可（通報者・adminとも）。adminによる処理は専用SECURITY DEFINER RPC（`admin_logs`とatomic）経由のみ。物理DELETEは行わない（6.7参照。未実装） |
 | blocks | 本人のみ（自分がブロックした一覧） | ログイン済み本人 | 本人のみ |
 | news | `status='published'`かつ`published_at<=now()`は全員、`draft`または未来の`published_at`はadmin(`is_admin()`)のみ | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | songs | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
@@ -905,3 +935,4 @@ song-images/{uuid}.{ext}
 | v1.16 | 2026-09-20 | Q47：`app_settings`をkey-value方式ではなく固定カラム・単一行方式に確定し、6.13に`id`（単一行保証用）・`current_terms_version`（text NOT NULL）・`current_privacy_policy_version`（text NOT NULL）・`updated_at`（Q37の共通トリガー対象）の構造を明記。バージョン値はtext型とし、利用規約とプライバシーポリシーは独立して変更可能であることを明記／Q48：`posts.event_id`・`comments.post_id`・`likes.post_id`・`event_participants.event_id`の4つのFKについて`ON DELETE RESTRICT`を確定し、6章冒頭に「その他のFKのON DELETE方針（確定）」を新設。各テーブルのリレーション説明にも反映し、profiles参照FKのRESTRICT方針と整合させる／Q49：`app_settings`の初期値を`current_terms_version='1.0'`・`current_privacy_policy_version='1.0'`（いずれもtext値）に確定し、6.13に反映／6章冒頭のupdated_at自動更新方針の説明に`app_settings`が対象テーブルに含まれることを明記／12章の未確定事項は引き続き0件を維持 |
 | v1.17 | 2026-09-26 | posts/comments moderationの確定実装（`delete_own_post()`/`delete_own_comment()`・`moderate_post()`/`moderate_comment()`という2種類のSECURITY DEFINER RPC）とPROJECT_SPEC.mdを同期。6.2・6.3に「`status`変更経路の分離（確定）」を新設し、`posts.status`/`comments.status`への直接UPDATEをクライアント（管理者を含む）へ一切許可しないこと、投稿者本人のlogical deleteと管理者のモデレーションをそれぞれ専用RPCへ分離すること、`deleted`は投稿者本人のself-delete専用のterminal状態であり管理者を含め生成・復元できないことを明記／6.2の「`hidden`と`deleted`の使い分け」表の`deleted`行を、管理者が生成できないことが分かる記述に修正／6.1.2・6.7に残っていた「管理者が`hidden`または`deleted`に変更する」という記述を、確定実装（`moderate_post()`/`moderate_comment()`は`published`↔`hidden`のみを許可し`deleted`を拒否する）に合わせて、管理者が変更できるのは`hidden`のみである旨に修正／6.11の「書き込み経路の方針」を、`admin_logs`へのINSERTがServer Action/Route Handler等のサーバーサイド処理から直接行われるという記述から、`moderate_post()`/`moderate_comment()`というSECURITY DEFINER RPCが対象のstatus変更と同一トランザクション内でatomicに記録するという記述へ修正。将来のServer Action/Route HandlerはこれらのRPCを呼び出す経路としてのみ機能し、`admin_logs`へ直接INSERTしないことを明記／`admin_logs.detail`へ記録する情報を`from_status`・`to_status`・任意の`reason`（trim後最大500文字）に限定し、本文全文・email・IPアドレス・token等を記録しない方針を明記／8章RLS方針表のposts・comments（UPDATE/DELETE列）・admin_logs（INSERT/UPDATE・DELETE列）を上記の確定実装に合わせて更新。DB migrationは今回作成せず、既存の確定済み実装（immutable）に文書を合わせる変更のみを行った |
 | v1.18 | 2026-09-26 | likesのown reaction visibility・unlike仕様を確定（旧仕様の廃止）。旧6.4は「hidden/deleted投稿に紐づくいいねは投稿者本人のみ閲覧可能で、いいねをした本人には見せない」としていたが、これを廃止し、fan-facing visibility（親投稿のvisibilityに従う）とown-like visibility（いいねをした本人＝`user_id=auth.uid()`が、親投稿の`status`/visibilityや自身の`profiles.status`（active/suspended/banned）に関わらず、常に自分のlike行を確認できる、独立した経路）を明確に分離する記述へ6.4を更新／unlike（`DELETE FROM likes`による物理DELETE、`user_id=auth.uid()`のみ）も同様に親投稿の`status`/visibilityおよび本人の`profiles.status`から独立することを明記／post authorに、自分の投稿に紐づく他人のlikesを閲覧する特別権限を付与しないことを明記（post authorが同時にlike ownerである場合は、そのself-likeのみown経路で見える）／own-like表示・unlikeが`likes`行自体の閲覧・削除のみを可能にし、非公開の親投稿本文等へのSELECT権限を拡大しないことを明記／新規いいね（INSERT）はactive本人・fan-facingで閲覧可能な`published`投稿のみという既存の非対称なeligibilityを維持し、own-like/unlikeの独立性とは意図的に異なる設計であることを明記／6.2の投稿者本人によるコメント・いいねの閲覧に関する記述を、投稿者本人であることによって他人のコメント・いいねへの閲覧範囲が自動的に拡大されるわけではない旨に修正／8章RLS方針表のlikes行を上記の確定仕様に合わせて更新（admin専用の削除権限も、今回のPM決定により設けないことに修正）。likes RLSのDB migrationは今回作成せず、既存の確定済み実装（posts/comments/admin_logs/moderation RPC、いずれもimmutable）には影響しない、ドキュメントのみの変更である |
+| v1.19 | 2026-09-26 | reportsの作成・閲覧・処理・privacy境界を確定（DB実装は後続フェーズで、本バージョンではドキュメントのみ）。6.7の`target_type`を実DBの`profile`/`post`/`comment`に同期（旧記述`user`を修正）／新規通報はactive本人のみ・自己通報禁止・存在確認必須・fan-facingで閲覧可能なpublished投稿/コメントのみ（block・親投稿の状態も既存visibilityに従う）・重複通報禁止を明記／通報者本人は`reports`本体を直接SELECTせず、`handled_by`を除く列のみ返す専用SECURITY DEFINER RPCで自分の通報のみ確認、adminのみ本体をSELECT可、対象ユーザー・第三者・anonは閲覧不可、通報者の提出後の編集・取消は不可と明記／`detail`はtrim後最大2000文字（現DB未実装）／管理者の通報処理は専用RPC経由（direct UPDATE/物理DELETEなし）、`handled_by`はサーバー側設定、`admin_logs`記録とatomic、対象のmoderation（`moderate_post/comment`）とは分離、profile通報の処理でユーザーstatusを自動変更しないことを明記／`status`遷移規則とprofile対象のstatus別eligibilityは未確定として明記／通報のレート制限（5回/10分）は維持（trigger未実装）／8章RLS方針表のreports行と6.11の書き込み経路を同期。migration・RLS・RPCは作成していない |
