@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.23
+- ステータス: Draft v1.24
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -151,7 +151,7 @@ Next.js App Router構成を前提とする。
 /admin/posts       投稿管理
 /admin/comments    コメント管理
 /admin/reports     通報対応
-/admin/events      LIVE管理
+/admin/events      LIVE管理（DBの読み取り契約: 一覧=`get_admin_events`、詳細・編集データ=`get_admin_event`。6.5参照。画面は未実装）
 /admin/news        ニュース管理
 /admin/music       楽曲管理
 /admin/logs        管理者操作ログ
@@ -450,22 +450,46 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 *クライアントからの書き込み*: `anon`・`authenticated`にはINSERT/UPDATE/DELETE等のwrite権限（列単位を含む）を付与しておらず、クライアントからの直接のwriteはすべて不可。postgres・service_roleのACLは変更していない。
 
-*adminの現状*: active adminも`authenticated`ロールのため、現時点でbase tableから取得できるのは、公開行の公開8列のみである。draft・一度も公開されていない`cancelled`・非公開の4列は、管理画面からまだ取得できない（**admin read boundaryは未実装**）。列権限はロール単位のため、これらのadmin向けの読み取りはbase tableの権限では実現できない。
+*adminの読み取り境界（確定・実装済み。M13・M14）*: active adminも`authenticated`ロールのため、base tableから取得できるのは、公開行の公開8列のみである（draft・一度も公開されていない`cancelled`・非公開の4列はbase tableからは取得できない）。列権限はロール単位で、adminだけに内部列をGRANTすることはできないため、adminだけにbase tableの内部列をGRANTする方式は採用していない。adminの読み取りは、次の2つの専用SECURITY DEFINER RPC（admin trusted boundary）で行う。
+- 公開の読み取りは「base tableのRLS + 列単位のSELECT権限」、adminの読み取りは「SECURITY DEFINER RPC」であり、両者は別の境界である。base table = 公開境界、admin RPC = trustedなadmin境界。active adminであっても、base tableからdraftや非公開の4列を直接取得することはできない。
+- 認可: 両RPCとも関数の最初に`public.is_admin()`（`role='admin'`かつ`status='active'`）を評価し、満たさなければ`EVENT_MANAGEMENT_NOT_AUTHORIZED`とする。一般ユーザー・suspended admin・banned admin・profile不在・`auth.uid()`がNULLはすべて拒否される。認可は引数のvalidation・対象eventの検索より先に行うため、未認可の呼び出しにeventの存在やstatusを漏らさない。
+- EXECUTE: `postgres`と`authenticated`のみ（`anon`・PUBLIC・`service_role`は不可）。`authenticated`の中で`is_admin()`によりactive adminだけが許可される。
+- 両RPCの共通の性質: owner=postgres・`SECURITY DEFINER`・`STABLE`・`search_path=''`で、dynamic SQLは使わない。RLSをbypassして全eventを読むが、公開の可視性の条件（`events_select_public`の述語）はRPC内に複製しない。読み取りのみで`admin_logs`には記録しない。
+- `EVENT_MANAGEMENT_NOT_AUTHORIZED`はadmin readの共通エラーとして実装済み。将来のwrite RPCでも共有することは候補だが、writeでも必ず同じエラーを使うとはまだ確定していない。adminの読み取りをRPCに統一するのはeventsについての判断（M12の列単位の権限との関係による）であり、news・songs等の他のresourceのadmin readを一律にRPCにする、という一般化はしない（個別に設計する）。
+
+*admin一覧: `get_admin_events(search text DEFAULT NULL, status_filter text DEFAULT NULL, after_event_date timestamptz DEFAULT NULL, after_id uuid DEFAULT NULL, page_size integer DEFAULT 20)`（`/admin/events`の一覧用）*
+- 返却列は次の7列のみ: `id`・`title`・`venue`・`event_date`・`status`・`first_published_at`・`updated_at`。`description`・`image_url`・`ticket_url`・`created_by`・`created_at`は一覧では返さない。
+- 行の範囲: 全status（`draft`・`public`・`cancelled`）。一度も公開されていない`cancelled`と、公開済みの`cancelled`の両方を取得できる。公開のRLS条件には依存しない。
+- 並び順: `event_date DESC, id DESC`（決定的）。公開の`/live`の並び順とは別の契約である。
+- pagination: keyset。cursorは`after_event_date`と`after_id`で、両方NULLなら先頭ページ、両方非NULLなら次ページ、片方のみは`INVALID_EVENT_CURSOR`。次ページの条件は`(event_date, id) < (after_event_date, after_id)`。cursorが実在するeventである必要はない。
+- `page_size`: 既定20。NULLは20、0・負数は1、101以上は100に丸める（エラーにしない）。
+- `search`: `title`または`venue`の部分一致（大文字小文字を区別しない）。前後の空白を除き、空ならfilterなし。`%`・`_`・`\`はLIKEのwildcardではなく通常の文字として扱う。trim後の長さは最大100文字で、101文字以上は`EVENT_SEARCH_TOO_LONG`。
+- `status_filter`: NULLなら全status。`draft`・`public`・`cancelled`の完全一致のみ有効で、それ以外（空文字・大文字小文字違い・前後の空白を含む）は`INVALID_EVENT_STATUS_FILTER`。
+- 意図的に未実装: 過去/未来のfilter、総件数、ページ番号によるpagination（offset）、任意のsort。これらは現在の契約に含まれない。
+
+*admin詳細: `get_admin_event(target_event_id uuid)`（`/admin/events`の詳細・編集データ用）*
+- 返却列はeventsの全12列: `id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`・`created_by`・`created_at`・`updated_at`・`first_published_at`（型はbase tableと同一）。`profiles`とのjoinはせず、`created_by`はuuidのみで、作成者名は返さない。
+- 行の範囲: statusに関係なく1件を返す。`draft`・`public`・一度も公開されていない`cancelled`・公開済みの`cancelled`のいずれも取得できる。
+- 存在しないUUID、およびactive adminが`NULL`を渡した場合は0行（専用のnot-foundエラー・validationエラーはない）。未認可の呼び出しは、`NULL`を含めどの入力でも`EVENT_MANAGEMENT_NOT_AUTHORIZED`が先に返る。不正なUUID文字列はPostgreSQLの型変換で拒否され、独自のエラーには変換しない。
+- 内部列の扱い: `created_by`・`created_at`はadmin詳細のみで返す（一覧・公開では返さない）。`updated_at`は一覧・詳細で返す（optimistic concurrencyは現在未実装で、将来のwrite設計の候補）。`first_published_at`は一覧・詳細で返し、`draft`と一度も公開されていない`cancelled`ではNULL、`public`と公開済み`cancelled`では非NULLである（公開APIでは引き続き非公開）。
+
+*実装状況*: eventsについて、公開の行境界・公開の列境界・admin一覧の読み取り（`get_admin_events`）・admin詳細の読み取り（`get_admin_event`）は実装済み。adminの書き込みは未実装。これらはDBレベルで検証済みであり、`/admin/events`の画面（Next.js）およびSupabase client/PostgREST経由のintegrationは未実装（UIからの動作確認は未実施）。
 
 **未実装・設計方針（未確定を含む）**:
-- admin read（未実装。方式・RPC名・signatureは未確定）: adminの全件（draft・一度も公開されていない`cancelled`を含む）と非公開の4列の読み取りは、専用のtrustedな読み取り境界を別途設計する（SECURITY DEFINER RPCが有力候補）。base tableのRLS（admin用のSELECT policy）だけでは、列権限がロール単位のため非公開列を読めない（従来の「admin readはbase tableのRLS」という推奨案は、M12の列単位の権限の採用により現在の方針ではない）。
-- admin write（未実装。RPC名・signature・validation・error codeは未確定）: 専用のSECURITY DEFINER RPC経由とする方向を維持する（作成・内容更新・status変更を分ける設計候補: `create_event` / `update_event` / `set_event_status`）。管理操作は将来`admin_logs`へatomicに記録する方向で検討する（action名・detail構造は未確定）。クライアントからの物理DELETEは許可しない方向を推奨案とする（現在はクライアントのDELETEは不可能）。
+- admin write（**未実装**。RPC名・signature・validation・error codeは未確定）: 専用のSECURITY DEFINER RPC経由とする方向を維持する（作成・内容更新・status変更を分ける設計候補: `create_event` / `update_event` / `set_event_status`）。管理操作は将来`admin_logs`へatomicに記録する方向で検討する（action名・detail構造は未確定）。クライアントからの物理DELETEは許可しない方向を推奨案とする（現在はクライアントのDELETEは不可能）。
 - 既知のfuture issue: `posts`の`live_report`作成時に、`event_id`が公開可能なeventかを検証していない（`posts`のINSERT policyは`event_id`の状態を検査しない）。今後の対応対象であり、現時点では変更していない。
 - Storageの`event-images`バケットは未作成で、Storage RLSも未実装（9章参照）。
 
 **未決定事項（PM判断待ち。確定仕様ではない）**:
 - 管理RPCで正式に許可するstatus遷移。
 - `title`・`venue`・`description`・`ticket_url`・`image_url`のvalidation（長さ上限、`ticket_url`のscheme、`image_url`のobject key形式）。
-- LIVE一覧の並び順・pagination（primaryの並び順、同一`event_date`のeventを決定的に並べるtie-breakの列、cursor方式かoffset方式か。実DBのテストで、同一`event_date`のeventの並びが一意でないと結果が不定になることを確認済みであり、本番では決定的な並び順が必要）。
+- 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、同一`event_date`のeventを決定的に並べるtie-breakの列、cursor方式かoffset方式か。実DBのテストで、同一`event_date`のeventの並びが一意でないと結果が不定になることを確認済みであり、本番では決定的な並び順が必要）。`/admin/events`のadmin一覧の並び順・paginationは`get_admin_events`で確定済みであり、公開の`/live`とは別の契約である。
+- adminの書き込み（event write RPC）の設計（未実装。RPC名・signature・error code・`admin_logs`への記録）。
+- eventsのoptimistic concurrency（`updated_at`を用いた編集競合の検知）を採用するか。
 - クライアントからの物理DELETEを将来も禁止するか。
-- admin read boundaryの具体的な方式・signature。
+- `posts`の`live_report`作成時に、`event_id`が公開可能なeventかを検証する方法（既知のfuture issue）。
 
-（解消済み: 公開済み`cancelled`は公開を継続する〔M11で確定〕。公開する列は上記8列で、`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない〔M12で確定〕。）
+（解消済み: 公開済み`cancelled`は公開を継続する〔M11で確定〕。公開する列は上記8列で、`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない〔M12で確定〕。adminの読み取り境界は、SECURITY DEFINER RPC `get_admin_events`（一覧）・`get_admin_event`（詳細）として、方式・signature・返却列・並び順・pagination・search/status filter・認可の契約を含めて確定・実装済み〔M13・M14〕。）
 
 ---
 
@@ -834,13 +858,13 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 ### セキュリティbaseline（実装済み。M9）
 
 - 対象6テーブル（`events`・`event_participants`・`news`・`songs`・`login_attempts`・`app_settings`）は、RLS無効かつanon/authenticatedにtableの全権限が付与された状態だったため、M9でdeny-by-defaultにした。M9直後の状態は、6テーブルとも RLS有効（FORCEなし）・policy 0件・anonとauthenticatedのtable権限なし・列単位のACLなし。postgres・service_roleの既存ACLは変更していない。
-- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を追加した。したがって現在は、`event_participants`・`news`・`songs`・`app_settings`の4テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
+- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を追加した。したがって現在は、`event_participants`・`news`・`songs`・`app_settings`の4テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
 - default privilege: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`により、postgresが今後`public`スキーマに作成するtableへのanon/authenticatedの自動的なtable権限付与を除去した。service_roleのdefault privilege、sequence・function・typeのdefault privilege、schema権限は変更していない。今後もschemaの変更はmigration経由で行う方針を維持する。`supabase_admin`が作成するtableのdefault privilegeは変更していない。
-- 公開読み取り（news・songs）や本人のwrite（event_participants）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`events`は公開の読み取りのみ利用できる（公開8列を明示して取得する）。adminの全件・内部列の読み取りと、adminの書き込みは未実装である。
+- 公開読み取り（news・songs）や本人のwrite（event_participants）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）が利用できる。adminの書き込みは未実装である。
 
 ### 現在のDB実装状況と最終要件の区別（events / event_participants / news / songs / login_attempts / app_settings）
 
-次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）のみ実装済みでadminの読み取り・書き込みは未実装、`event_participants`・`news`・`songs`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6を参照。
+次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）、M13・M14でadminの読み取り境界（SECURITY DEFINER RPC）が実装済みでadminの書き込みは未実装、`event_participants`・`news`・`songs`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6を参照。
 
 ### RLSポリシーの基本方針（テーブル別）
 
@@ -850,7 +874,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 | posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`/`image_url`のみ）は投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_post()`（logical delete、terminal）または管理者の`moderate_post()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`のみ）はコメント投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_comment()`（logical delete、terminal）または管理者の`moderate_comment()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | likes | fan-facingでは親投稿が公開範囲内の場合のみ全員が閲覧可。それとは独立して、いいねをした本人（`user_id=auth.uid()`）は親投稿の`status`/visibilityや自身の`profiles.status`に関わらず自分のlike行のみ常にSELECT可（6.4参照。投稿者本人への他人likes閲覧の特別権限はなし） | ログイン済みactive本人（`status='active'`のユーザーのみ、`user_id=auth.uid()`、親投稿がfan-facingで閲覧可能な`published`の場合のみ） | 本人（自分の分のみ、`user_id=auth.uid()`）が物理DELETE可。親投稿の`status`/visibilityや本人の`profiles.status`に関わらず削除可（unlike）。他人のlikeは本人以外（adminを含め）削除不可。UPDATE不可 |
-| events | 公開の読み取り（実装済み。M11・M12）: `status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`のeventを、anon・authenticatedの全員がSELECTできる（RLS policy `events_select_public`。`event_date`・利用者の状態には依存しない）。取得できる列は公開8列（`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`）のみで、`SELECT *`は不可（列単位のSELECT権限）。`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない。draft・一度も公開されていない`cancelled`と、adminの全件・非公開列の読み取り（専用のtrustedな読み取り境界を別途設計。**未実装**）（6.5参照） | admin(`is_admin()`) のみ（クライアントからの直接INSERTは不可・実装済み。専用SECURITY DEFINER RPC経由とする方向。**未実装・詳細未確定**） | admin(`is_admin()`) のみ（クライアントからの直接UPDATE/DELETEは不可・実装済み。専用RPC経由とする方向。クライアントからの物理DELETEは行わない方向。**未実装・詳細未確定**）。`first_published_at`はDB triggerが管理しクライアントから指定できない |
+| events | 公開の読み取り（実装済み。M11・M12）: `status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`のeventを、anon・authenticatedの全員がSELECTできる（RLS policy `events_select_public`。`event_date`・利用者の状態には依存しない）。取得できる列は公開8列（`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`）のみで、`SELECT *`は不可（列単位のSELECT権限）。`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない。draft・一度も公開されていない`cancelled`は公開しない。adminの全件（draft・一度も公開されていない`cancelled`を含む）と非公開列の読み取りは、base tableではなく専用のSECURITY DEFINER RPC（一覧`get_admin_events`・詳細`get_admin_event`。active adminのみ。実装済み。M13・M14）で行う（6.5参照） | admin(`is_admin()`) のみ（クライアントからの直接INSERTは不可・実装済み。専用SECURITY DEFINER RPC経由とする方向。**未実装・詳細未確定**） | admin(`is_admin()`) のみ（クライアントからの直接UPDATE/DELETEは不可・実装済み。専用RPC経由とする方向。クライアントからの物理DELETEは行わない方向。**未実装・詳細未確定**）。`first_published_at`はDB triggerが管理しクライアントから指定できない |
 | event_participants | `visibility in ('public','attended')`は全員、`private`は本人のみ、いずれも本人は常に自分の分を閲覧可（最終要件。anon（未ログイン）へ公開するvisibilityの範囲と、writeをbase RLSか専用RPCで行うかは未確定。現在はM9により全拒否で未実装。6.6参照） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人 or admin(`is_admin()`) |
 | reports | admin(`is_admin()`)のみ`reports`本体をSELECT可（moderation用途）。通報者本人は本体へ直接SELECTせず、専用RPCで自分の通報のみ確認（`handled_by`は返さない）。対象ユーザー・第三者・anonは不可（RLS有効・policyは`reports_select_admin`の1件のみ。anonは権限なし、authenticatedはtable SELECTのみで一般ユーザーはRLSにより0行。通報者本人の閲覧は`get_my_reports()`のみ。6.7参照。実装済み） | ログイン済みactive本人のみ（`reporter_id=auth.uid()`、自己通報不可、fan-facingで閲覧可能な対象のみ、存在確認あり）。クライアントからの`reports`直接INSERTは不可（admin含む）。作成は`create_report()`（SECURITY DEFINER RPC）のみ。レート制限（5回/10分）はreportsのBEFORE INSERT triggerで実装済み（6.7参照） | クライアントからの直接UPDATE/DELETEは不可（通報者・adminとも）。adminによる処理は専用SECURITY DEFINER RPC `process_report()`（active adminのみ。`admin_logs`とatomic）経由のみ（実装済み）。`status`と`handled_by`/`handled_at`の整合はDB CHECK（`reports_handled_fields_consistency_check`）で保証。物理DELETEは行わない（6.7参照。実装済み） |
 | blocks | 本人のみ（自分がブロックした一覧） | ログイン済み本人 | 本人のみ |
@@ -1027,9 +1051,11 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 
 - 管理RPCで正式に許可する`events`のstatus遷移。
 - `events`のvalidation上限値（`title`・`venue`・`description`・`ticket_url`・`image_url`）。
-- LIVE一覧の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
+- 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
+- `events`のadmin write RPCの設計（未実装。詳細は6.5参照）。
+- `events`のoptimistic concurrencyを採用するか。
 - `events`のクライアントからの物理DELETEを将来も禁止するか。
-- `events`のadmin read boundaryの具体的な方式・signature（adminの全件と非公開の4列の読み取り）。
+- `posts`の`live_report`作成時の、`event_id`が公開可能なeventかの検証方法。
 - `event_participants`のanonへの公開範囲（`visibility`）。
 - `event_participants`のwriteをbase tableのRLSで行うか専用RPCで行うか。
 
@@ -1063,3 +1089,4 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 | v1.21 | 2026-09-27 | reportsの通報処理実装（M6・M7）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.7・6.11・8章を更新: `status`と`handled_by`/`handled_at`の整合CHECK（`reports_handled_fields_consistency_check`。`pending`/`reviewing`ではNULL、`resolved`/`rejected`ではNOT NULL）／`handled_by`＝最終判断を行ったadmin・`handled_at`＝最終判断の完了日時・`reviewing`の担当者/開始日時は`reports`に保存せず`admin_logs`のみ／`process_report(target_report_id, new_status, note)` RPC（active adminのみ・認可を最優先・`new_status`は4値の完全一致・成功遷移は`pending→reviewing/resolved/rejected`と`reviewing→resolved/rejected`の5通りのみでno-opを含む他11通りは`INVALID_REPORT_TRANSITION`・`resolved`/`rejected`はterminalでreopenなし・`SELECT ... FOR UPDATE`で直列化し`expected_current_status`は持たない・`note`は任意でtrim後1000文字・エラーコード5種）／`admin_logs`へのatomicな監査記録（`action=process_report`、`target_type=report`、`detail={from_status,to_status[,note]}`）／通報の処理と対象のmoderation（`moderate_*`・profile status）は別操作。旧「通報処理RPC未実装」「`status`遷移規則未確定」等の記述を更新。**引き続き未実装（将来）**: 終端を戻す監査ログ付きreopen RPC、`reviewing`の担当者/開始日時field、user/profile moderation RPC、posts/comments/likesのレート制限trigger |
 | v1.22 | 2026-09-27 | eventsのDB実装とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5: `events.status`を実DBの`draft`/`public`/`cancelled`（default `draft`）に修正し、`ended`（開催済み）statusは存在せず開催済みは`event_date`と現在時刻で判断することを明記／`first_published_at`（初回`public`日時。DB triggerがINSERT時のdraft固定・初回public時のnow()設定・一度設定後の不変・publicからdraftへの復帰不可を強制）と、DBが現在受理するstatus遷移（将来の管理RPCの正式操作とは別）を記載／6.6: `event_participants.status`を`going`/`attended`/`cancelled`に修正（`interested`廃止）。8章: M9 security baseline（events・event_participants・news・songs・login_attempts・app_settingsをRLS有効・policy 0件・anon/authenticatedのtable権限なしのdeny-by-defaultにし、`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`で今後のpublic tableへのanon/authenticatedの自動付与を除去）とM10（`login_attempts`のactive adminのみSELECT。書き込み経路は未実装）の実装状況を追記し、最終要件（RLS表）と現在のDB実装を区別。6.12・6.13にも実装状況を追記（`app_settings`はクライアント全拒否、signupの`handle_new_user()`は影響なし）。12章に残る判断事項（公開済みcancelledの公開、管理RPCの正式なstatus遷移、validation上限値、一覧の並び順、`created_by`等の公開範囲、物理DELETE、`event_participants`のanon公開範囲とwrite方式）を記載。events・event_participants・news・songsの最終RLS/RPC、Storage RLS、ログイン失敗の記録は引き続き未実装 |
 | v1.23 | 2026-09-27 | eventsの公開境界（M11・M12）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・8章: M11の公開の行境界（RLS policy `events_select_public`。`status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`。一度公開されたLIVEは中止後も公開を継続し、公開前にcancelledになったeventは公開しない。`event_date`と利用者の状態は公開条件に使わない）／M12の公開の列境界（anon・authenticatedはtable単位のSELECTを持たず、公開8列〔`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`〕のみ列単位のSELECT。非公開4列〔`created_by`・`created_at`・`updated_at`・`first_published_at`〕。`created_by`はadminの識別を避けるため非公開、`first_published_at`はRLS内部でのみ使用）／`SELECT *`は不可でclientは公開8列を明示、将来の列は明示的なGRANTまでは公開されないopt-in／PostgRESTを含む統合テストはNext.js実装時。adminのbase table read（RLS policy）という従来の推奨案を、列権限がロール単位であることから撤回し、admin read boundaryは専用のtrustedな読み取り境界として別途設計（未実装）。adminの書き込みは専用RPCの方向を維持（未実装）。6.1.4: 公開プロフィールの取得を実装どおり`get_public_profiles()`/`get_public_profile()`のSECURITY DEFINER RPCに修正し、`public_profiles` VIEWは存在しないことを明記（8章のprofiles行も同様）。12章の判断事項から、公開済みcancelledの扱いと公開列を解消し、残りは管理RPCの正式なstatus遷移・validation上限値・LIVE一覧の並び順/pagination・物理DELETE・admin read boundaryの方式・`event_participants`のanon公開範囲とwrite方式。event_participants・news・songsの最終RLS/RPC、`posts.event_id`の検証、Storage RLSは引き続き未実装 |
+| v1.24 | 2026-09-27 | eventsのadmin読み取り境界（M13・M14）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・8章・5.4: adminの読み取りは、公開の「base tableのRLS + 列単位のSELECT権限」とは別に、SECURITY DEFINER RPCで実装（列権限がロール単位のため、adminだけにbase tableの内部列をGRANTする方式は不採用）。認可は`is_admin()`（active adminのみ。一般ユーザー・suspended/banned admin・profile不在・uid NULLは拒否）で、エラーは`EVENT_MANAGEMENT_NOT_AUTHORIZED`（引数検証・対象検索より先）。EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）。M13 `get_admin_events(search, status_filter, after_event_date, after_id, page_size)`: active adminのみ・全status（一度も公開されていないcancelledを含む）・返却7列（`id`・`title`・`venue`・`event_date`・`status`・`first_published_at`・`updated_at`）・`event_date DESC, id DESC`・keyset pagination（片方のみのcursorは`INVALID_EVENT_CURSOR`）・`page_size`を1〜100に丸める（既定20）・`title`/`venue`の部分一致（trim・`%` `_` `\`は通常の文字・最大100文字で`EVENT_SEARCH_TOO_LONG`）・`status_filter`（不正値は`INVALID_EVENT_STATUS_FILTER`）。過去/未来のfilter・総件数・offset・任意のsortは未実装。M14 `get_admin_event(target_event_id)`: eventsの全12列（`created_by`はuuidのみ）・全statusを1件・存在しないUUIDとNULLは0行（専用エラーなし）。読み取りは`admin_logs`に記録しない。base table（公開境界）とadmin RPC（trustedなadmin境界）の区別を明記し、公開の行・列境界（M11・M12）は不変。解消した未決定事項（admin read boundaryの方式・signature・並び順・pagination・search/filter・返却列・認可）を12章・6.5から削除し、残る事項（admin write RPC・許可するstatus遷移・validation上限値・optimistic concurrency・物理DELETE・公開/liveの並び順/pagination・event_participantsのanon公開範囲とwrite方式・`posts.event_id`の検証）を更新。`/admin/events`の画面とSupabase client/PostgREST経由のintegrationは未実装。events admin writeは引き続き未実装 |
