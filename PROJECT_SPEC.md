@@ -248,7 +248,7 @@ Next.js App Router構成を前提とする。
 `profiles.status`（アカウントの利用状態: active/suspended/banned）と、`posts.status`/`comments.status`（コンテンツの公開状態: published/hidden/deleted）は、それぞれ独立した状態管理とする。一方の値の変化が他方の値を自動的に変化させることはない。
 
 - `suspended`/`banned`になったことだけを理由に、そのユーザーの過去の`published`な投稿・コメントを自動的に非表示・削除しない。`posts.status`/`comments.status`は、6.2/6.3で定義された基準（投稿者本人の削除操作、または管理者による個別のモデレーション判断）によってのみ変更される。
-- ユーザーを`banned`にする際、管理者は当該ユーザーの過去の投稿・コメントを確認する運用とする。規約違反等に該当するコンテンツがあれば、6.2/6.3の「hiddenとdeletedの使い分け」に従い個別に`hidden`または`deleted`とし、`admin_logs`に記録する（この考え方は、6.7 reportsで既に確立している「通報のみでは自動非表示にせず、管理者が確認した上で個別に対応する」という方針と同一である）。
+- ユーザーを`banned`にする際、管理者は当該ユーザーの過去の投稿・コメントを確認する運用とする。規約違反等に該当するコンテンツがあれば、`moderate_post()`/`moderate_comment()`経由で個別に`hidden`とし、`admin_logs`に記録する（この考え方は、6.7 reportsで既に確立している「通報のみでは自動非表示にせず、管理者が確認した上で個別に対応する」という方針と同一である）。管理者がこの確認作業を通じて対象を`deleted`にすることはできない（`deleted`は投稿者本人のself-delete専用のterminal状態。6.2/6.3参照）。
 - ただし、上記の確認には見落とし（確認漏れ）が生じうる。その保証されない確認作業を補う目的で「`profiles.status = 'banned'`であること」自体をSELECT時の自動非表示条件にはしない。非表示化は、あくまで管理者が個別に確認・判断した結果として`posts.status`/`comments.status`に反映されたものだけを根拠とする。
 - `suspended`が解除された場合、および将来`banned`から復旧する仕組みが実装された場合も、コンテンツ側の`status`は自動的には変更されない。個別に`hidden`/`deleted`とされたコンテンツは、その判断が別途取り消されない限りそのまま維持される。
 
@@ -315,6 +315,11 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 - ログイン中のユーザーに対しては、上記に加えて自分がブロックしたユーザーの投稿もSELECT結果から除外する（6.8 blocksの方針を参照）。
 - 投稿者の`profiles.status`（suspended/banned等）は、投稿自体の`status`に影響しない（アカウント状態とコンテンツ公開状態の関係は6.1.2を参照）。
 
+**`status`変更経路の分離（確定）**: `posts.status`への直接UPDATEはクライアント（管理者を含む）に一切許可しない。`status`の変更は以下2つの専用SECURITY DEFINER RPCのいずれか経由に限定する。
+- 投稿者本人によるlogical delete: `delete_own_post()`。`published`→`deleted`・`hidden`→`deleted`のみを許可し、`deleted`は本人操作専用のterminal状態とする（`deleted`から`published`/`hidden`への復帰経路はいずれの経路にも存在しない）。`profiles.status`がactive/suspended/bannedのいずれであっても本人は利用できる。
+- 管理者によるモデレーション: `moderate_post()`。`published`↔`hidden`の双方向のみを許可し、`deleted`への変更・`deleted`からの復帰はRPC内部で拒否する（管理者であっても`deleted`を生成・復元できない）。呼び出し元が`is_admin()`（`role='admin'`かつ`status='active'`）であることをRPC内部で必ず確認する。
+- 両RPCとも対象行を`SELECT ... FOR UPDATE`でロックしてから現在の`status`を確定し、不正な遷移（同一状態への変更を含む）を拒否する。`moderate_post()`は、`status`変更と`admin_logs`への記録（6.11参照）を同一トランザクション内でatomicに実行し、一方だけが成立する状態を作らない。
+
 **DB制約（確定）**:
 - `post_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`normal`/`live_report`、`published`/`hidden`/`deleted`に強制する。
 - `post_type='live_report'`の場合は`event_id`を必須とするDB制約（CHECK等）を設ける。
@@ -324,7 +329,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | status | 意味 | 主な発生契機 | 再公開の可能性 |
 |---|---|---|---|
 | `hidden` | 運営による一時的な非表示 | 規約違反の疑いがある投稿を、管理者が調査目的で一時的に見えなくする | あり（調査の結果、問題なしと判断すれば`published`に戻す） |
-| `deleted` | 投稿者本人または運営による削除 | 投稿者自身の削除操作、または運営による最終的な削除判断 | 原則なし（再公開しない。DB上のレコードは論理削除として保持する） |
+| `deleted` | 投稿者本人による削除（terminal） | 投稿者自身の削除操作（`delete_own_post()`） | なし（禁止。管理者を含め復元する経路は存在しない。DB上のレコードは論理削除として保持する） |
 
 - `hidden`は「一時停止」、`deleted`は「恒久的な削除」という位置づけの違いであり、いずれも物理削除は行わない。
 
@@ -348,7 +353,9 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 
 **ユニーク制約**: なし。
 
-**表示制御の方針**: 6.2 posts の「status / 表示制御の方針」および「`hidden`と`deleted`の使い分け」と同様。コメント作成者本人は自分のコメントを`status`に関わらず閲覧でき、`deleted`の場合は「削除済み」と分かる表示にする。加えて、親投稿(`posts`)が一般ユーザーに非表示（`hidden`/`deleted`）の場合は、コメント自体の`status`が`published`であっても一般ユーザーには表示しない。ログイン中のユーザーに対しては、コメント投稿者を自分がブロックしている場合、そのコメントもSELECT結果から除外する。また、コメント投稿者の`profiles.status`もコメント自体の`status`に影響しない（6.1.2参照）。
+**表示制御の方針**: 6.2 posts の「status / 表示制御の方針」および「`hidden`と`deleted`の使い分け」と同様。コメント作成者本人は自分のコメントを`status`に関わらず閲覧でき、`deleted`の場合は「削除済み」と分かる表示にする。加えて、親投稿(`posts`)が一般ユーザーに非表示（`hidden`/`deleted`）の場合は、コメント自体の`status`が`published`であっても一般ユーザーには表示しない。この非表示化は親投稿側の可視性判定のみによるものであり、`comments.status`自体は変更しない。ログイン中のユーザーに対しては、コメント投稿者を自分がブロックしている場合、そのコメントもSELECT結果から除外する。また、コメント投稿者の`profiles.status`もコメント自体の`status`に影響しない（6.1.2参照）。
+
+**`status`変更経路の分離（確定）**: 6.2 postsと同様に、`comments.status`への直接UPDATEはクライアント（管理者を含む）に一切許可しない。投稿者本人によるlogical deleteは`delete_own_comment()`（`published`/`hidden`→`deleted`のみ、terminal）、管理者によるモデレーションは`moderate_comment()`（`published`↔`hidden`のみ、`deleted`への変更・復元は不可）という専用SECURITY DEFINER RPC経由に限定する。`moderate_comment()`は親投稿(`posts`)の`status`を参照・変更しない（コメント自身の`status`のみを対象とする）。
 
 **DB制約（確定）**: `status`にはDB CHECK制約を設け、値の範囲を`published`/`hidden`/`deleted`に強制する。
 
@@ -452,7 +459,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 - 通報されたことを対象ユーザー（`target_id`が指すユーザー、または投稿・コメントの作成者）へ通知しない。
 - 通報者（`reporter_id`）の身元を対象ユーザーへ公開しない。`reports`テーブルのSELECTは通報者本人とadmin(`is_admin()`)のみに限定し、対象ユーザーが自分に対する通報の`reporter_id`を参照できないようにする。
 - 通報された投稿・コメントは、管理者が対応を判断するまでは通常どおり表示する（通報のみを理由に自動で`hidden`化はしない）。
-- 管理者が内容を確認した上で、必要に応じて対象の投稿・コメントを`hidden`または`deleted`に変更する等の対応を行う。この対応は`admin_logs`に記録する。
+- 管理者が内容を確認した上で、必要に応じて対象の投稿・コメントを`moderate_post()`/`moderate_comment()`経由で`hidden`に変更する等の対応を行う（管理者は`deleted`へ変更できない。6.2/6.3参照）。この対応は`admin_logs`に記録する。
 
 **DB制約（確定）**:
 - `target_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`post`/`comment`/`user`、`pending`/`reviewing`/`resolved`/`rejected`に強制する。
@@ -572,7 +579,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 |---|---|---|
 | id | uuid (PK) | |
 | admin_id | uuid (FK → profiles.id) | 操作した管理者 |
-| action | text | 操作種別（例: `delete_post`, `ban_user`, `resolve_report`） |
+| action | text | 操作種別（例: `moderate_post`, `moderate_comment`, `ban_user`, `resolve_report`） |
 | target_type | text | 操作対象の種別（例: `post`, `user`, `report`） |
 | target_id | uuid | 操作対象のID |
 | detail | jsonb (nullable) | 操作の詳細（変更前後の値など） |
@@ -583,8 +590,10 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 **ユニーク制約**: なし。
 
 **書き込み経路の方針（確定）**:
-- `admin_logs`へのINSERTをクライアントから直接許可するRLSポリシーは作成しない。
-- 記録はServer Action / Route Handler等、サーバーサイド処理からのみ行う（サーバー側でのみ書き込み権限を持たせる。クライアントSDKからのINSERTは常に拒否する）。
+- `admin_logs`へのINSERTをクライアントから直接許可するRLSポリシーは作成しない。active admin自身であっても、`admin_logs`への直接INSERT/UPDATE/DELETEは許可しない（追記のみ・改ざん不可の監査ログとする。UPDATE/DELETEのpolicy自体を作成しない）。
+- 投稿・コメントのモデレーションに伴う`admin_logs`への記録は、`moderate_post()`/`moderate_comment()`という、それぞれ`owner=postgres`のSECURITY DEFINER RPC内部でのみ行う（6.2/6.3参照）。これらのRPCは、呼び出し元が`is_admin()`（`role='admin'`かつ`status='active'`）であることを確認したうえで、対象の`posts.status`/`comments.status`変更と`admin_logs`へのINSERTを同一トランザクション内でatomicに実行する。ログ記録が失敗した場合はstatus変更もロールバックされ、status変更が失敗した場合はログも残らない（片方だけが成立する状態を作らない）。
+- 将来実装するServer Action / Route Handler等のアプリケーション層は、`admin_logs`へ直接INSERTしない。これらはモデレーション要求を受け付け、`moderate_post()`/`moderate_comment()`を呼び出す経路としてのみ機能する（最終的なauthorizationとatomicityの強制はDB側RPCが担い、アプリケーション層はこれを代替しない）。
+- `detail`には`from_status`・`to_status`・任意の`reason`（前後空白をtrimし、空文字/空白のみはNULLとして省略、最大500文字）等、必要最小限の情報のみを記録する。投稿・コメントの本文全文、`email`、IPアドレス、認証token、secret、passwordその他不要な個人情報は記録しない。
 - 管理者操作の監査ログであるため、一般ユーザー（管理者を含む）によるクライアント経由の改ざん・偽装記録を防止することを目的とする。
 
 **DB制約（確定）**: `action`・`target_type`はfree textとし、DB CHECK制約による固定enum化は行わない（確定。将来増える運用アクションを都度スキーマ変更せずに記録できるようにするため）。
@@ -687,8 +696,8 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | テーブル | 参照(SELECT) | 作成(INSERT) | 更新/削除(UPDATE/DELETE) |
 |---|---|---|---|
 | profiles | 本人は自分自身の行のみSELECT可、adminは管理上必要な行をSELECT可。一般ユーザーによる他ユーザーの`profiles`本体への直接SELECTは禁止し、公開情報の取得は`public_profiles`VIEW（6.1.4参照）経由に限定する | 本人（サインアップ時） | 本人（保護対象カラムを除く。6.1.3参照） or admin(`is_admin()`)（role/status等の保護対象カラムの変更は専用RPC経由。6.1.3参照） |
-| posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 投稿者本人 or admin(`is_admin()`) |
-| comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | コメント投稿者本人 or admin(`is_admin()`) |
+| posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`/`image_url`のみ）は投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_post()`（logical delete、terminal）または管理者の`moderate_post()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
+| comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`のみ）はコメント投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_comment()`（logical delete、terminal）または管理者の`moderate_comment()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | likes | 親投稿が公開範囲内であれば全員、それ以外は当該投稿の投稿者本人のみ（いいねした本人ではない） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人（自分の分のみ） or admin(`is_admin()`) が削除可 |
 | events | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | event_participants | `visibility in ('public','attended')`は全員、`private`は本人のみ、いずれも本人は常に自分の分を閲覧可 | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人 or admin(`is_admin()`) |
@@ -696,7 +705,7 @@ VIEWとunderlying `profiles`のGRANT/RLS/`security_invoker`の具体的な組み
 | blocks | 本人のみ（自分がブロックした一覧） | ログイン済み本人 | 本人のみ |
 | news | `status='published'`かつ`published_at<=now()`は全員、`draft`または未来の`published_at`はadmin(`is_admin()`)のみ | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
 | songs | 全員 | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
-| admin_logs | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理（Server Action/Route Handler等）からのみ記録 | 不可（追記のみ、更新・削除禁止） |
+| admin_logs | admin(`is_admin()`) のみ | クライアントからの直接INSERTは不可（active admin自身も不可）。`moderate_post()`/`moderate_comment()`等のSECURITY DEFINER RPCが、対象のstatus変更とatomicに記録する。将来のServer Action/Route HandlerはこれらのRPCを呼び出すのみで、`admin_logs`へ直接INSERTしない | 不可（追記のみ、更新・削除禁止。active admin自身も不可） |
 | login_attempts | admin(`is_admin()`) のみ | クライアントからのINSERTは不可。サーバーサイド処理からのみ記録 | 不可（クライアント直接操作不可。成功時の失敗履歴クリアもサーバーサイド処理のみ） |
 | app_settings | anon/authenticated（adminを含む）いずれも不可（確定。Q46）。参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定（6.13参照） | anon/authenticatedいずれも不可（確定。Q45） | anon/authenticatedいずれも不可（確定。Q45） |
 
@@ -887,3 +896,4 @@ song-images/{uuid}.{ext}
 | v1.14 | 2026-09-20 | Q45：現行の利用規約バージョン・現行のプライバシーポリシーバージョンをDB側の`app_settings`テーブルで一元管理する方針を確定し、6章に「6.13 app_settings」を新設（13テーブル目）。`app_settings`は一般ユーザー（anon/authenticated）による直接INSERT/UPDATE/DELETEを禁止することを確定し、8章RLS方針表に行を追加／7章「profilesの自動作成（確定）」を更新し、signup trigger時に`terms_version`・`privacy_policy_version`をクライアント申告値ではなく`app_settings`の現行バージョンから記録する方針に修正／7章「利用規約・プライバシーポリシーへの同意記録（確定）」の「アプリ側で定数・設定値として管理する」という記述を、DB側の`app_settings`を正本とする記述に修正／6.1.3の`record_policy_consent()`の説明を更新し、対象ユーザー・terms_version・privacy_policy_version・terms_agreed_at・privacy_policy_agreed_atのそれぞれの値の出典（`auth.uid()`／`app_settings`／DB側の`now()`）とクライアント非信頼の対象を明記／12章に`app_settings`のSELECT方針が未確定である旨を新たな未確定事項として追記 |
 | v1.15 | 2026-09-20 | Q46：`app_settings`はDB内部の信頼できる設定値の正本として扱い、一般クライアントから直接読み取らせない方針を確定。6.13のアクセス制御方針を更新し、anon・authenticated（adminを含む）いずれによる直接SELECTも禁止し、参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定することを明記／これらの処理で`SECURITY DEFINER`を使用する場合は既存仕様どおり`search_path`固定・必要最小限の権限とすることを明記／将来クライアント画面へ現行バージョンを表示する必要が生じても`app_settings`テーブル全体は公開せず、必要な値のみを返す安全な手段を別途設計するものとし、MVP時点では新規RPC/APIを追加しないことを明記／8章RLS方針表のapp_settings行のSELECT列を「anon/authenticated（adminを含む）いずれも不可」に更新／12章に残っていた`app_settings`のSELECT方針の未確定事項を解消し、PROJECT_SPEC.md全体を確認したうえで「現時点でMVP仕様の未確定事項はない」に更新 |
 | v1.16 | 2026-09-20 | Q47：`app_settings`をkey-value方式ではなく固定カラム・単一行方式に確定し、6.13に`id`（単一行保証用）・`current_terms_version`（text NOT NULL）・`current_privacy_policy_version`（text NOT NULL）・`updated_at`（Q37の共通トリガー対象）の構造を明記。バージョン値はtext型とし、利用規約とプライバシーポリシーは独立して変更可能であることを明記／Q48：`posts.event_id`・`comments.post_id`・`likes.post_id`・`event_participants.event_id`の4つのFKについて`ON DELETE RESTRICT`を確定し、6章冒頭に「その他のFKのON DELETE方針（確定）」を新設。各テーブルのリレーション説明にも反映し、profiles参照FKのRESTRICT方針と整合させる／Q49：`app_settings`の初期値を`current_terms_version='1.0'`・`current_privacy_policy_version='1.0'`（いずれもtext値）に確定し、6.13に反映／6章冒頭のupdated_at自動更新方針の説明に`app_settings`が対象テーブルに含まれることを明記／12章の未確定事項は引き続き0件を維持 |
+| v1.17 | 2026-09-26 | posts/comments moderationの確定実装（`delete_own_post()`/`delete_own_comment()`・`moderate_post()`/`moderate_comment()`という2種類のSECURITY DEFINER RPC）とPROJECT_SPEC.mdを同期。6.2・6.3に「`status`変更経路の分離（確定）」を新設し、`posts.status`/`comments.status`への直接UPDATEをクライアント（管理者を含む）へ一切許可しないこと、投稿者本人のlogical deleteと管理者のモデレーションをそれぞれ専用RPCへ分離すること、`deleted`は投稿者本人のself-delete専用のterminal状態であり管理者を含め生成・復元できないことを明記／6.2の「`hidden`と`deleted`の使い分け」表の`deleted`行を、管理者が生成できないことが分かる記述に修正／6.1.2・6.7に残っていた「管理者が`hidden`または`deleted`に変更する」という記述を、確定実装（`moderate_post()`/`moderate_comment()`は`published`↔`hidden`のみを許可し`deleted`を拒否する）に合わせて、管理者が変更できるのは`hidden`のみである旨に修正／6.11の「書き込み経路の方針」を、`admin_logs`へのINSERTがServer Action/Route Handler等のサーバーサイド処理から直接行われるという記述から、`moderate_post()`/`moderate_comment()`というSECURITY DEFINER RPCが対象のstatus変更と同一トランザクション内でatomicに記録するという記述へ修正。将来のServer Action/Route HandlerはこれらのRPCを呼び出す経路としてのみ機能し、`admin_logs`へ直接INSERTしないことを明記／`admin_logs.detail`へ記録する情報を`from_status`・`to_status`・任意の`reason`（trim後最大500文字）に限定し、本文全文・email・IPアドレス・token等を記録しない方針を明記／8章RLS方針表のposts・comments（UPDATE/DELETE列）・admin_logs（INSERT/UPDATE・DELETE列）を上記の確定実装に合わせて更新。DB migrationは今回作成せず、既存の確定済み実装（immutable）に文書を合わせる変更のみを行った |
