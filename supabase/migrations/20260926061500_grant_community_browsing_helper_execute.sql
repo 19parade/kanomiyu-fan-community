@@ -1,0 +1,62 @@
+-- =============================================================================
+-- 20260926061500_grant_community_browsing_helper_execute.sql
+-- community browsing helper ACL修正 - authenticatedへEXECUTE権限を追加
+--
+-- 対象（本migrationに含まれるもの）:
+--   - internal.is_community_browsing_allowed(): authenticatedへのEXECUTE GRANTのみ
+--
+-- 本migrationに含まれないもの:
+--   - internal.is_community_browsing_allowed()の関数定義・owner・SECURITY DEFINER・
+--     search_path（いずれも変更禁止・無変更）
+--   - internal schemaのUSAGE/CREATE ACL（authenticatedは既にUSAGEを保持済みで
+--     あることを事前確認済みのため、再GRANTは行わない）
+--   - internal.is_blocked_with()（変更禁止・無変更）
+--   - posts/comments/profiles/blocksのRLS・policy・table ACL
+--   - 新しいtrigger/function/RPC/index
+--
+-- 20260920022832_core_schema.sql（001）〜20260922081159_blocks_rls.sql（010）
+-- はいずれも変更しない。
+--
+-- -----------------------------------------------------------------------------
+-- 背景・実装前に読み取り専用で確認した事実:
+--   - internal.is_community_browsing_allowed() は owner=postgres・
+--     SECURITY DEFINER・search_path=''・引数なし・boolean返却。
+--     本体: caller自身(auth.uid())のprofiles.statusが('active','suspended')
+--     に含まれるかどうかのみを判定する（active/suspended→true、banned・
+--     profile不存在・auth.uid() IS NULL→false）。第三者user_idを指定する
+--     APIではない。この定義は本migrationで一切変更しない。
+--   - 現在のfunction ACL: postgres=X/postgres のみ。anon/authenticated/
+--     service_role/PUBLICはいずれもEXECUTE権限を持たない
+--     （has_function_privilege()で直接確認済み）。
+--   - これまでこの関数は public.get_public_profiles() / public.get_public_profile()
+--     （いずれもSECURITY DEFINER・owner=postgres）の内部からのみ呼び出されて
+--     きたため、内側の呼び出しは外側関数のowner（postgres）の権限で評価され、
+--     authenticatedが直接EXECUTE権限を持たない状態でも問題が表面化しなかった。
+--   - 一方、RLS policyのUSING/WITH CHECK句はSECURITY DEFINERの文脈を持たず、
+--     クエリを実行しているロール（authenticated）自身の権限で評価される。
+--     したがって、authenticatedにEXECUTE権限がない現状のままでは、将来の
+--     posts/comments RLS policyからこの関数を呼び出した瞬間に
+--     "permission denied for function is_community_browsing_allowed" で
+--     failするため、事前にこのACLだけを解消しておく。
+--   - internal schemaのACL（pg_namespace.nspacl）は
+--     postgres=UC/postgres,authenticated=U/postgres であり、authenticatedは
+--     既にUSAGE権限を保持している（has_schema_privilege('authenticated',
+--     'internal','USAGE') = true、CREATE = false）。anonはUSAGE/CREATEいずれも
+--     false。したがって本migrationでは schema USAGE の GRANT は行わない
+--     （既に存在するものを重複GRANTしない）。
+-- -----------------------------------------------------------------------------
+
+
+-- -----------------------------------------------------------------------------
+-- internal.is_community_browsing_allowed()へ、authenticatedのEXECUTE権限のみを
+-- 追加する。anon・PUBLIC・service_roleへのGRANT/REVOKEは行わない
+-- （anon/PUBLICは現状どおりEXECUTE不可のまま維持し、service_roleは既存の
+-- 状態を変更しない）。ALTER DEFAULT PRIVILEGESは使用しない。関数のDROP/
+-- CREATE OR REPLACEも行わない（既存定義・owner・SECURITY DEFINER・
+-- search_pathを一切変更しないため）。
+-- -----------------------------------------------------------------------------
+grant execute
+  on function internal.is_community_browsing_allowed()
+  to authenticated;
+
+-- =============================================================================
