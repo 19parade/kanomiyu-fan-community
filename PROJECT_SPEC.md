@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.26
+- ステータス: Draft v1.27
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -61,7 +61,7 @@
 | 7 | ファン一覧 | 登録ファンの一覧・簡易プロフィール表示。 |
 | 8 | LIVE一覧 | LIVE（ライブ）情報の一覧表示。 |
 | 9 | LIVE詳細 | 個別LIVEの詳細情報表示。 |
-| 10 | LIVE参加表明 | 会員がLIVEへの参加意思を表明できる機能。 |
+| 10 | LIVE参加表明 | 会員が、LIVEへの参加予定・参加済み（本人申告）を登録できる機能。公開設定（デフォルトは非公開）に応じて、公開を許可した参加者だけが他のログイン済みファンに表示される。詳細は6.6参照。 |
 | 11 | LIVEレポート（LIVE投稿） | 特定のLIVEに紐づくファン投稿（参加予定・楽しみといった事前の投稿、LIVE当日の投稿、感想・LIVEレポート、写真付きの思い出、後日の思い出投稿、一度公開された後に中止されたLIVEについての投稿等。これらは別々のpost_typeではない）。投稿機能の一種として実装し、DB上のpost_typeは`live_report`（UI上の表示名称は将来「LIVE投稿」等にできる）。紐付けできるLIVEは、ファンに公開されているLIVE（公開中、または一度公開された後に中止されたLIVE）に限る。詳細は6.2参照。 |
 | 12 | ニュース | 運営（管理者）が発信する公式・非公式ニュース。 |
 | 13 | 通報 | 不適切な投稿・コメント・ユーザーの通報機能。 |
@@ -575,7 +575,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 ### 6.6 event_participants
 
-**目的**: LIVEへの参加表明を管理する。
+**目的**: LIVEへの参加表明（参加予定・参加済み）を、本人が管理し、公開を許可した分だけを他のファンが見られるようにする。ticket保有者や入場（check-in）の一覧ではなく、本人申告のデータである。
 
 | カラム | 型 | 説明 |
 |---|---|---|
@@ -583,24 +583,99 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 | event_id | uuid (FK → events.id) | 対象LIVE |
 | user_id | uuid (FK → profiles.id) | 参加表明したユーザー |
 | status | text | `going` \| `attended` \| `cancelled`（デフォルト `going`） |
-| visibility | text | `public` \| `private` \| `attended`（デフォルト `public`） |
+| visibility | text | `public` \| `private` \| `attended`（デフォルト `private`） |
 | created_at | timestamptz | |
 
-**リレーション**: `event_id → events.id`（ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）、`user_id → profiles.id`。
+`updated_at`列はない（楽観的同時実行制御を使わないため。下記参照）。
 
-**ユニーク制約**: `(event_id, user_id)` に UNIQUE（1ユーザー1LIVEにつき1レコード、状態変更はUPDATEで行う）。
+**リレーション**: `event_id → events.id`、`user_id → profiles.id`（いずれもON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）。
 
-**visibility（公開設定）の方針**:
-- `public`: 他ユーザーにも参加表明として公開する（デフォルト）。
-- `private`: 本人のみ確認可能。他ユーザー・LIVE詳細ページの参加者一覧には表示しない。
-- `attended`: 参加済みであることを公開してよい状態（LIVE後の実績表示等を想定）。
-- LIVE詳細ページの参加者一覧には `visibility='public'` または `'attended'` のレコードのみ表示する。`private`は本人がマイページ（`/me/events`）で確認する分にのみ表示する。
+**ユニーク制約**: `(event_id, user_id)` に UNIQUE（1ユーザー1LIVEにつき1レコード。状態の変更は同じ行の更新で行う）。
 
-**DB制約（確定・実装済み）**: `status`・`visibility`にはDB CHECK制約（`event_participants_status_check`・`event_participants_visibility_check`）を設け、値の範囲をそれぞれ`going`/`attended`/`cancelled`、`public`/`private`/`attended`に強制する（`interested`は廃止。statusの`attended`とvisibilityの`attended`は別概念）。`(event_id, user_id)`のUNIQUE、`event_id → events.id`・`user_id → profiles.id`のFK（いずれもON DELETE RESTRICT）は実装済み。
+**status の意味（確定・実装済み）**:
+- `going`: 本人がそのLIVEへの参加予定を登録している状態。ticketの購入・入場の保証・運営による確認を意味しない。
+- `attended`: 本人が申告した参加済みの状態。運営によるcheck-inの検証ではない。
+- `cancelled`: ユーザーが自分の参加予定・参加記録を取り消した状態。`events.status='cancelled'`（LIVE自体の中止）とは別の概念である。
 
-**現在のセキュリティ状態（実装済み。M9）**: deny-by-default（RLS有効・FORCEなし・policy 0件・anon/authenticatedのtable権限なし）で、クライアントからの直接アクセスはすべて不可。visibilityを考慮した読み取りと、本人による書き込みは**未実装**。
+**visibility（公開設定）の意味（確定・実装済み）**:
+- `public`: `going`・`attended`をfan-facingな参加者一覧（下記M21）に公開してよい。
+- `private`: 本人とadmin以外には公開しない。
+- `attended`: 参加予定（`going`）の段階では公開せず、`attended`になった場合だけ参加実績として公開してよい（statusの`attended`とvisibilityの`attended`は別の概念）。
+- **privacy-by-default（M19）**: `visibility`のdefaultは`private`である（旧仕様の`public`から変更）。LIVE参加予定・参加履歴はユーザーの行動情報であるため、明示的に公開設定しない限り非公開とする。M19は既存行を更新するmigrationではない（適用時点で0行）。M20のRPCは`visibility`を必ず明示して受け取るため、defaultは防御的な既定値である。
 
-**未決定事項（PM判断待ち。確定仕様ではない）**: anon（未ログイン）に参加者一覧のどの範囲（`visibility`）を公開するか、および参加表明のwriteをbase tableのRLSで行うか専用RPCで行うか。参加対象となるeventの条件（公開状態等）も`events`の最終RLS/RPCの確定後に決める。
+**DB制約（確定・実装済み）**: `status`・`visibility`にはDB CHECK制約（`event_participants_status_check`・`event_participants_visibility_check`）があり、値の範囲を上記に強制する（`interested`は廃止。`Maybe`・waitlist等の追加statusはMVPでは設けない）。UNIQUE・FK・indexは変更していない（`event_participants_pkey`・`event_participants_event_user_key`・`event_participants_user_id_idx`）。triggerはない。
+
+**アーキテクチャ（確定・実装済み。M19〜M21）**: 3層で構成する。base tableへfan-facingな一般のSELECT policyを追加せず、authenticatedへのbase tableの直接writeも許可しない。
+1. *base tableの読み取り（M19）*: 本人とactive adminのみ。RLS policy＋列単位のSELECT権限。
+2. *本人のwrite（M20）*: SECURITY DEFINER RPC `set_my_event_participation`のみ。
+3. *fan-facingな参加者一覧（M21）*: SECURITY DEFINER RPC `get_event_participants`のみ。
+
+**base tableの読み取り境界（実装済み。M19）**: authenticatedには現在の6列（`id`・`event_id`・`user_id`・`status`・`visibility`・`created_at`）の列単位のSELECT権限のみがあり、anonには一切の権限がない。RLS policyは次の2本のみである。
+- `event_participants_select_own`（`user_id = auth.uid()`）: 本人は自分の行を、eventの状態・行のstatus・visibility（`private`・`cancelled`を含む）・自分の`profiles.status`（`active`・`suspended`・`banned`）に関係なく読める（自分自身の保存データへのアクセス。write・discoveryの権限とは分離する）。bannedのユーザーがDB上で自分の行を読めることと、アプリ側で`/restricted`へ誘導する（5.6）ことは別のレイヤーである。
+- `event_participants_select_admin`（`is_admin()`）: active adminは全行を読める。
+他ユーザーの行はvisibilityの値に関係なくbase tableからは読めない（0行）。
+
+**base tableの書き込み境界（実装済み）**: authenticatedにbase tableのINSERT・UPDATE・DELETE権限はなく、RLSのINSERT・UPDATE・DELETE policyもない。active adminもauthenticated role経由では直接writeできない。本人のwriteはM20のRPCのみで、admin用のwrite（他人の参加表明の変更）は存在しない。
+
+*本人のwrite RPC（実装済み。M20）*: `set_my_event_participation(target_event_id uuid, new_status text, new_visibility text) RETURNS TABLE (status text, visibility text)`。
+- *properties / ACL*: owner=postgres・SECURITY DEFINER・VOLATILE・`search_path=''`・dynamic SQLなし。EXECUTEはauthenticatedとpostgresのみ（PUBLIC・anon・service_roleは不可）。
+- *認可*: `is_active_user()`（activeのユーザー）のみ。suspended・banned・profileなし・uid NULLは`EVENT_PARTICIPATION_NOT_AUTHORIZED`（認可は他の検証より先）。対象は常に`user_id = auth.uid()`で、他人を指定する引数はない（active adminも自分自身の行についてのみ通常のユーザーとして利用できる）。
+- *desired-state API*: 引数は3つとも必須（DEFAULTなし）で、NULLを「変更しない」の意味には使わない。毎回望ましい状態（status・visibility）を完全指定する。現在の状態と完全に一致する場合は成功するno-opで、UPDATEは行わない。戻り値は成功後の`status`・`visibility`の2列のみ（新規作成・更新・no-opで同じshape）。`status`は`going`・`attended`・`cancelled`、`visibility`は`public`・`private`・`attended`の完全一致のみ（trimも大文字小文字の補正もしない）。
+- *新規行の作成*: `events.status = 'public'`のeventのみ。draft・cancelled（`first_published_at`に関係なく）・不存在・NULLのeventには作成できず、これらは区別されない同一のエラー（`EVENT_NOT_AVAILABLE_FOR_PARTICIPATION`）になる（存在のoracleを作らない）。参加表明の履歴がない状態から`status='cancelled'`の行は新規作成できない（public eventの場合は`INVALID_PARTICIPATION_TRANSITION`。public以外のeventは上記の同一エラーで、statusによって区別されない）。
+- *going と event_date*: public eventであれば`event_date`が未来・現在・過去のいずれでも`going`を指定できる。DBは過去のeventへの`going`を禁止しない（eventsに`end_at`がなく、`event_date`だけでは終了時刻を正確に表せないため。UIで過去のLIVEにattendedを主導線とするかはDB契約ではない）。
+- *attended と event_date*: `attended`を指定できるのは`event_date <= now()`の場合のみ（未来のeventは`EVENT_NOT_AVAILABLE_FOR_ATTENDANCE`）。過去・現在のpublic eventには、`going`を経由せず`attended`を直接新規登録できる（本人申告）。
+- *public eventの既存行*: 本人による訂正を広く許可する。`going`・`attended`・`cancelled`の相互の遷移（`going → going`・`going → attended`・`going → cancelled`・`attended → going`・`attended → attended`・`attended → cancelled`・`cancelled → going`・`cancelled → attended`・`cancelled → cancelled`）がいずれも可能で、`attended`は終端状態ではない。ただし`attended`を指定する場合は常に`event_date <= now()`が必要。visibilityの変更（3値の相互）も常に可能。
+- *cancelledのeventの既存行*: eventがcancelledになっても参加表明の行は自動変更しない（`going`を`cancelled`へ自動変換しない。UIはevent.statusから「LIVE中止」を表示する）。既存行については、現在の状態と完全一致するno-op、visibilityのみの変更、任意の現在のstatusから`cancelled`への変更は許可する（本人のprivacy controlをeventのlifecycleで奪わない）。`cancelled → going`・`cancelled → attended`・`going → attended`・`attended → going`のように参加状態を新しく肯定する方向へ変更することは`EVENT_NOT_AVAILABLE_FOR_PARTICIPATION`で拒否する。
+- *draftのeventの既存行（legacy）*: 通常のfan-facingなwriteからはdraftの行は作成されないが、trustedな経路で存在する行については、cancelledのeventの既存行と同じ規則（no-op・visibilityのみ・`cancelled`への変更は許可、肯定する方向への変更は拒否）とする。
+- *物理DELETE*: しない。参加の取り消しは`status='cancelled'`で表し、DELETE用のRPCはない。
+- *同時実行*: 楽観的同時実行制御（`updated_at`・`expected_updated_at`・version）は使わず、desired-stateとDBのlockで安全化する（M16・M17のevent更新とは異なる方式）。eventの行を`FOR SHARE`、参加者の行を`FOR UPDATE`でlockする（lock順は常に`events → event_participants`）。初回作成は`INSERT ... ON CONFLICT (event_id, user_id) DO NOTHING`で、衝突した場合は既存行として処理する（UNIQUE違反はクライアントに露出しない）。同時の更新は最後にcommitしたdesired stateが勝つ。
+- *M17との関係（保守上の重要な契約）*: `set_event_status`（M17）はeventの行を`FOR UPDATE`でlockする。M20のeventの`FOR SHARE`と競合するため、参加表明の書き込みとeventのcancelは直列化され、cancelledが確定した後に新規の`going`・`attended`が滑り込むことはない。M20またはM17のlockを変更する場合はこの依存を再評価する。
+- *エラー（6種）*: `EVENT_PARTICIPATION_NOT_AUTHORIZED`・`INVALID_PARTICIPATION_STATUS`・`INVALID_PARTICIPATION_VISIBILITY`・`EVENT_NOT_AVAILABLE_FOR_PARTICIPATION`・`EVENT_NOT_AVAILABLE_FOR_ATTENDANCE`・`INVALID_PARTICIPATION_TRANSITION`。`admin_logs`には記録しない（本人の通常操作）。blocks・profile属性は書き込みの条件に使わない。
+
+*fan-facingな参加者一覧RPC（実装済み。M21）*: `get_event_participants(target_event_id uuid, status_filter text DEFAULT NULL, after_username text DEFAULT NULL, after_id uuid DEFAULT NULL, page_size integer DEFAULT 20) RETURNS TABLE (id uuid, username text, display_name text, avatar_url text, fan_since date, participation_status text)`。返す`id`は`profiles.id`（参加者のuser id）で、`event_participants.id`ではない。
+- *properties / ACL*: owner=postgres・SECURITY DEFINER・STABLE・`search_path=''`・dynamic SQLなし・row lockなし。EXECUTEはauthenticatedとpostgresのみ（PUBLIC・anon・service_roleは不可）。anonには参加者一覧を公開しない（eventはM11によりanonが読めても、「誰が参加するか」は別のprivacy boundary）。
+- *閲覧者*: `internal.is_community_browsing_allowed()`（active・suspended）のみ。banned・profileなし・uid NULLは、エラーにせず0行（`status_filter`・cursorの検証より前に判定するため、閲覧者の状態を不正な引数のエラーで区別できない）。
+- *eventの条件*: `events.status = 'public'`のeventのみ。draft・cancelled（一度公開されたものを含む）・不存在・NULLは0行（エラーにしない）。`event_date`は条件にしない（未来・過去のpublic eventのどちらも取得できる）。cancelledのeventで0行とするのは、中止されたLIVEについて「誰が行く予定だったか・参加登録していたか」という行動履歴を第三者へ残さないためである（本人・adminのbase tableの読み取りには影響しない）。
+- *参加者の公開条件*: 下表のとおり。eventがpublicで、参加者のprofile・block条件も満たす場合の表示である。
+
+| status | visibility | fan-facingな一覧 |
+|---|---|---|
+| going | public | 表示 |
+| going | private | 非表示 |
+| going | attended | 非表示 |
+| attended | public | 表示 |
+| attended | private | 非表示 |
+| attended | attended | 表示 |
+| cancelled | public / private / attended | 非表示（常に） |
+
+- *参加者のprofile*: `profiles.status`が`active`・`suspended`のみ表示し、`banned`は非表示（既存のpublic profileの契約と同じ）。
+- *block*: 閲覧者と参加者の間に、どちら向きでもblockがあれば非表示（`internal.is_blocked_with()`の再利用。双方向）。閲覧者自身にはfalseになる。
+- *閲覧者自身の行*: 公開条件を満たす場合のみ一覧に含まれる（`going/public`は表示、`going/private`は非表示）。privateな自分の行の確認はM19のown readを使う。
+- *admin*: active adminが呼んでもfan-facingな条件をbypassしない（`private`・cancelledの参加者・bannedの参加者・blockされた参加者・cancelledのeventは見えない）。管理目的の全行の読み取りはM19のadmin readを使う。
+- *返却*: `id`・`username`・`display_name`・`avatar_url`・`fan_since`・`participation_status`の6列のみ。`participation_status`は`event_participants.status`で、fan-facingには`going`・`attended`のみが返る（`cancelled`は返らない）。`visibility`は返さないため、`attended/public`と`attended/attended`は応答から区別できない。返さないもの: `event_participants.id`・`visibility`・`created_at`（参加表明の時刻は公開しない）・`bio`・`role`・profileのstatus・terms/privacyの項目・eventの項目・block情報・件数（`total_count`）。
+- *status_filter*: `NULL`（`going`と`attended`）・`going`・`attended`のみ（完全一致。trimも大文字小文字の補正もしない）。それ以外（`cancelled`・空文字・空白付き・大文字等）は`INVALID_PARTICIPANT_STATUS_FILTER`。filterは公開条件を上書きせず、絞り込みのみを行う。
+- *pagination*: `username ASC, id ASC`のkeyset（`(username, id) > (after_username, after_id)`）。`after_username`・`after_id`は両方NULL（先頭ページ）か両方指定（有効）で、片方のみは`INVALID_PARTICIPANT_CURSOR`。cursor対象のユーザーの存在・可視性は検証しない（値そのものを境界とする）。`page_size`はNULLなら20、それ以外は1〜100へclampする（`get_public_profiles()`と同じ）。`after_id`はuuid型のため、不正なUUID文字列は関数の本体に入る前にPostgreSQLの型変換エラー（22P02）になり得る（M21独自のエラーには変換しない）。ページ間のsnapshotは保証しない（取得の間に公開設定・statusが変わった行は次のページから消え得る）。MVPではusernameが不変であることを前提に`(username, id)`をcursorに使う（将来usernameを変更可能にする場合はcursorの安定性を再評価する）。
+- *提供しないもの*: 検索・件数（`total_count`・countのRPC・集計）・参加者の詳細取得のRPC（`get_event_participant(event_id, user_id)`のようなもの）。private・cancelled・block・bannedの存在をoracleにしないため。
+- *エラー（2種）*: `INVALID_PARTICIPANT_STATUS_FILTER`・`INVALID_PARTICIPANT_CURSOR`。閲覧できない場合・eventが対象外の場合は0行（エラーではない）。
+
+**M11との違い・M18との独立（混同しないこと）**: eventそのもののpublic readはM11の「`public`、または一度公開された後の`cancelled`」だが、参加者の一覧（M21）は「`public`のみ」であり、この差は意図的である。また、M20の`attended`は`event_date <= now()`を要求するが、M21の一覧は`event_date`を条件にしない。LIVE投稿（M18の`live_report`）と参加表明は独立で、`live_report`の作成に`going`・`attended`・参加表明の行の存在は不要である。
+
+**セキュリティ維持要件（SECURITY DEFINERの不変条件）**: `get_event_participants`はSECURITY DEFINER（owner=postgres）でbase tableのRLSをbypassするため、閲覧者の権限・`events.status='public'`・参加者のstatus/visibility・参加者のprofile status・双方向blockを関数内で明示的に適用している。将来、eventsの公開範囲・profilesの公開範囲・blocksの意味・参加表明のvisibilityを変更する場合は、`get_event_participants`（およびM20）を必ず再評価する。
+
+**security matrix（現在のDB実装）**:
+
+| 主体 | 自分の行のbase read | 全行のbase read | 自分の参加表明のwrite（M20） | fan-facingな参加者一覧（M21） |
+|---|---|---|---|---|
+| anon | 不可 | 不可 | 不可 | 不可 |
+| active | 可 | 不可 | 可 | 可 |
+| suspended | 可 | 不可 | 不可 | 可 |
+| banned | 可 | 不可 | 不可 | 不可（0行） |
+| active admin | 可 | 可 | 自分の行のみ | 可（fan-facingな条件のまま） |
+| service_role | trustedな境界（RLSをbypass） | trustedな境界 | RPCのEXECUTEなし | RPCのEXECUTEなし |
+
+**実装状況**: 実装済み（DBレベル）: schema・privacy default（`private`）・本人とadminのbase read（M19）・本人のwrite RPC（M20）・fan-facingな参加者一覧（pagination・status filter・block・profile status。M21）。画面（`/live/[id]`の参加者表示・参加登録UI・`/me/events`）とNext.js / Supabase client / PostgREST経由のintegrationは未実装。
+
+**未実装・将来の課題（確定仕様ではない）**: 参加者の件数表示・検索・Realtime・通知・followとの連携・DM・同行者募集・check-in / ticketの検証・adminによる訂正のwrite・physical DELETE・Interested / Maybe / waitlist / capacity / +1。**件数を将来実装する場合の要件**: `get_event_participants`と同じ閲覧者・event・参加者・profile・blockのprivacy条件を使い、非表示の参加者（private・cancelled・block・banned等）の存在を件数から推測できないこと。**性能**: participant discovery専用のindexは追加していない（既存の`event_participants_pkey`・`event_participants_event_user_key`・`event_participants_user_id_idx`を利用）。大規模化した場合はquery planを再評価する（現時点でindexの追加を仕様として要求しない）。
 
 ---
 
@@ -939,13 +1014,13 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 ### セキュリティbaseline（実装済み。M9）
 
 - 対象6テーブル（`events`・`event_participants`・`news`・`songs`・`login_attempts`・`app_settings`）は、RLS無効かつanon/authenticatedにtableの全権限が付与された状態だったため、M9でdeny-by-defaultにした。M9直後の状態は、6テーブルとも RLS有効（FORCEなし）・policy 0件・anonとauthenticatedのtable権限なし・列単位のACLなし。postgres・service_roleの既存ACLは変更していない。
-- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。したがって現在は、`event_participants`・`news`・`songs`・`app_settings`の4テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
+- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。さらに、M19で`event_participants`のprivacy baseline（`visibility`のdefaultを`private`へ変更、本人とactive adminのSELECT境界）を、M20で本人のwrite境界（SECURITY DEFINER RPC `set_my_event_participation`）を、M21でfan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`）を追加した（6.6参照。authenticatedへのbase tableの直接writeは許可していない）。したがって現在は、`news`・`songs`・`app_settings`の3テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
 - default privilege: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`により、postgresが今後`public`スキーマに作成するtableへのanon/authenticatedの自動的なtable権限付与を除去した。service_roleのdefault privilege、sequence・function・typeのdefault privilege、schema権限は変更していない。今後もschemaの変更はmigration経由で行う方針を維持する。`supabase_admin`が作成するtableのdefault privilegeは変更していない。
-- 公開読み取り（news・songs）や本人のwrite（event_participants）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
+- 公開読み取り（news・songs）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`event_participants`は、本人のwrite（`set_my_event_participation`のRPC）、本人とadminのread（base tableのRLS）、fan-facingな参加者一覧（`get_event_participants`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
 
 ### 現在のDB実装状況と最終要件の区別（events / event_participants / news / songs / login_attempts / app_settings）
 
-次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）、M13・M14でadminの読み取り境界（SECURITY DEFINER RPC）、M15〜M17でadminの書き込み境界（SECURITY DEFINER RPC）が実装済み、`event_participants`・`news`・`songs`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6を参照。
+次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）、M13・M14でadminの読み取り境界（SECURITY DEFINER RPC）、M15〜M17でadminの書き込み境界（SECURITY DEFINER RPC）が実装済み、`event_participants`はM19〜M21で本人とadminのread（RLS）・本人のwrite（RPC）・fan-facingな参加者一覧（RPC）が実装済み、`news`・`songs`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6を参照。
 
 ### RLSポリシーの基本方針（テーブル別）
 
@@ -956,7 +1031,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 | comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`のみ）はコメント投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_comment()`（logical delete、terminal）または管理者の`moderate_comment()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | likes | fan-facingでは親投稿が公開範囲内の場合のみ全員が閲覧可。それとは独立して、いいねをした本人（`user_id=auth.uid()`）は親投稿の`status`/visibilityや自身の`profiles.status`に関わらず自分のlike行のみ常にSELECT可（6.4参照。投稿者本人への他人likes閲覧の特別権限はなし） | ログイン済みactive本人（`status='active'`のユーザーのみ、`user_id=auth.uid()`、親投稿がfan-facingで閲覧可能な`published`の場合のみ） | 本人（自分の分のみ、`user_id=auth.uid()`）が物理DELETE可。親投稿の`status`/visibilityや本人の`profiles.status`に関わらず削除可（unlike）。他人のlikeは本人以外（adminを含め）削除不可。UPDATE不可 |
 | events | 公開の読み取り（実装済み。M11・M12）: `status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`のeventを、anon・authenticatedの全員がSELECTできる（RLS policy `events_select_public`。`event_date`・利用者の状態には依存しない）。取得できる列は公開8列（`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`）のみで、`SELECT *`は不可（列単位のSELECT権限）。`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない。draft・一度も公開されていない`cancelled`は公開しない。adminの全件（draft・一度も公開されていない`cancelled`を含む）と非公開列の読み取りは、base tableではなく専用のSECURITY DEFINER RPC（一覧`get_admin_events`・詳細`get_admin_event`。active adminのみ。実装済み。M13・M14）で行う（6.5参照） | admin(`is_admin()`) のみ。クライアントからのbase tableへの直接INSERTは不可（admin含む）。作成は専用SECURITY DEFINER RPC `create_event`（active adminのみ・`admin_logs`とatomic。実装済み。M15）のみ | admin(`is_admin()`) のみ。クライアントからのbase tableへの直接UPDATE/DELETEは不可（admin含む）。内容の更新は`update_event`（M16）、status変更は`set_event_status`（M17）というSECURITY DEFINER RPC（いずれもactive adminのみ・`expected_updated_at`の完全一致による楽観的同時実行制御・`admin_logs`とatomic。実装済み）のみ。物理DELETEを行うRPCは存在せず、将来も禁止するかは未決定。`first_published_at`はDB triggerが管理しクライアントから指定できない |
-| event_participants | `visibility in ('public','attended')`は全員、`private`は本人のみ、いずれも本人は常に自分の分を閲覧可（最終要件。anon（未ログイン）へ公開するvisibilityの範囲と、writeをbase RLSか専用RPCで行うかは未確定。現在はM9により全拒否で未実装。6.6参照） | ログイン済み本人（自分の分のみ、`status='active'`のユーザーのみ） | 本人 or admin(`is_admin()`) |
+| event_participants | base tableのSELECT（実装済み。M19）は本人（`user_id = auth.uid()`。eventの状態・status・visibility・自分のアカウントstatus〔banned含む〕に関係なく自分の行のみ）とactive admin（`is_admin()`。全行）のみで、他ユーザーの行はvisibilityに関係なくbase tableからは読めない。anonは不可。他のファンへの公開は、fan-facingな専用のSECURITY DEFINER RPC `get_event_participants`（実装済み。M21）のみ: ログイン済みでactive/suspendedの閲覧者、`events.status='public'`のevent、`going/public`・`attended/public`・`attended/attended`の参加者（`private`・`cancelled`は非表示）、参加者の`profiles.status`がactive/suspended、双方向blockなし。adminも同じ条件（bypassなし）。anonには公開しない（6.6参照） | base tableへの直接INSERTは不可（admin含む）。本人の作成・変更は専用のSECURITY DEFINER RPC `set_my_event_participation`（実装済み。M20。active本人のみ・desired-state。6.6参照）のみ | base tableへの直接UPDATE/DELETEは不可（admin含む）。更新はM20のRPCのみ（adminが他人の行を変更する経路はない）。physical DELETEは行わず、取り消しは`status='cancelled'`で表す |
 | reports | admin(`is_admin()`)のみ`reports`本体をSELECT可（moderation用途）。通報者本人は本体へ直接SELECTせず、専用RPCで自分の通報のみ確認（`handled_by`は返さない）。対象ユーザー・第三者・anonは不可（RLS有効・policyは`reports_select_admin`の1件のみ。anonは権限なし、authenticatedはtable SELECTのみで一般ユーザーはRLSにより0行。通報者本人の閲覧は`get_my_reports()`のみ。6.7参照。実装済み） | ログイン済みactive本人のみ（`reporter_id=auth.uid()`、自己通報不可、fan-facingで閲覧可能な対象のみ、存在確認あり）。クライアントからの`reports`直接INSERTは不可（admin含む）。作成は`create_report()`（SECURITY DEFINER RPC）のみ。レート制限（5回/10分）はreportsのBEFORE INSERT triggerで実装済み（6.7参照） | クライアントからの直接UPDATE/DELETEは不可（通報者・adminとも）。adminによる処理は専用SECURITY DEFINER RPC `process_report()`（active adminのみ。`admin_logs`とatomic）経由のみ（実装済み）。`status`と`handled_by`/`handled_at`の整合はDB CHECK（`reports_handled_fields_consistency_check`）で保証。物理DELETEは行わない（6.7参照。実装済み） |
 | blocks | 本人のみ（自分がブロックした一覧） | ログイン済み本人 | 本人のみ |
 | news | `status='published'`かつ`published_at<=now()`は全員、`draft`または未来の`published_at`はadmin(`is_admin()`)のみ（最終要件。現在はM9により全拒否で最終RLS/RPCは未実装） | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
@@ -1128,16 +1203,15 @@ song-images/{uuid}.{ext}
 
 実装着手前にChatGPT側での確定、または双方合意が必要な論点。
 
-v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その後の実装で、`events`・`event_participants`について次の設計判断が必要な論点が生じた（PM判断待ち。詳細は6.5・6.6参照）。確定するまでは仕様として扱わない。新たな論点が生じた場合は本章に追記する。
+v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その後の実装で、`events`について次の設計判断が必要な論点が生じた（PM判断待ち。詳細は6.5参照。`event_participants`の論点はM19〜M21で解消済みで、6.6参照）。確定するまでは仕様として扱わない。新たな論点が生じた場合は本章に追記する。
 
 - 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
 - `events`のクライアントからの物理DELETEを将来も禁止するか。
 - Storageのobject lifecycle（アップロード・差し替え・削除・孤児objectの掃除）。
 - Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認。
-- `event_participants`のanonへの公開範囲（`visibility`）。
 
 （`posts.event_id`が公開可能なeventだけを参照できるようにする方法はM18で解消済み〔6.2参照〕。なお、`events`のSELECT policyを追加・変更する場合は`posts.event_id`の参照可能範囲への影響を必ず再評価するというセキュリティ維持要件が、6.5に定められている。）
-- `event_participants`のwriteをbase tableのRLSで行うか専用RPCで行うか。
+（`event_participants`の参加者一覧のanonへの公開範囲・writeの方式・privacy defaultなどはM19〜M21で解消済み〔6.6参照〕。なお、events・profiles・blocksの公開範囲や参加表明のvisibilityの意味を変更する場合は、`get_event_participants`（M21）とM20への影響を必ず再評価するというセキュリティ維持要件が、6.6に定められている。）
 
 ---
 
@@ -1172,3 +1246,4 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 | v1.24 | 2026-09-27 | eventsのadmin読み取り境界（M13・M14）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・8章・5.4: adminの読み取りは、公開の「base tableのRLS + 列単位のSELECT権限」とは別に、SECURITY DEFINER RPCで実装（列権限がロール単位のため、adminだけにbase tableの内部列をGRANTする方式は不採用）。認可は`is_admin()`（active adminのみ。一般ユーザー・suspended/banned admin・profile不在・uid NULLは拒否）で、エラーは`EVENT_MANAGEMENT_NOT_AUTHORIZED`（引数検証・対象検索より先）。EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）。M13 `get_admin_events(search, status_filter, after_event_date, after_id, page_size)`: active adminのみ・全status（一度も公開されていないcancelledを含む）・返却7列（`id`・`title`・`venue`・`event_date`・`status`・`first_published_at`・`updated_at`）・`event_date DESC, id DESC`・keyset pagination（片方のみのcursorは`INVALID_EVENT_CURSOR`）・`page_size`を1〜100に丸める（既定20）・`title`/`venue`の部分一致（trim・`%` `_` `\`は通常の文字・最大100文字で`EVENT_SEARCH_TOO_LONG`）・`status_filter`（不正値は`INVALID_EVENT_STATUS_FILTER`）。過去/未来のfilter・総件数・offset・任意のsortは未実装。M14 `get_admin_event(target_event_id)`: eventsの全12列（`created_by`はuuidのみ）・全statusを1件・存在しないUUIDとNULLは0行（専用エラーなし）。読み取りは`admin_logs`に記録しない。base table（公開境界）とadmin RPC（trustedなadmin境界）の区別を明記し、公開の行・列境界（M11・M12）は不変。解消した未決定事項（admin read boundaryの方式・signature・並び順・pagination・search/filter・返却列・認可）を12章・6.5から削除し、残る事項（admin write RPC・許可するstatus遷移・validation上限値・optimistic concurrency・物理DELETE・公開/liveの並び順/pagination・event_participantsのanon公開範囲とwrite方式・`posts.event_id`の検証）を更新。`/admin/events`の画面とSupabase client/PostgREST経由のintegrationは未実装。events admin writeは引き続き未実装 |
 | v1.25 | 2026-09-28 | eventsのadmin書き込み境界（M15・M16・M17）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・6.11・8章・5.4・12章: eventsは「公開の読み取り=base tableのRLS+列単位のSELECT権限（M11・M12）／adminの読み取り=SECURITY DEFINER RPC（M13・M14）／adminの書き込み=SECURITY DEFINER RPC（M15〜M17）」の3層。authenticated/adminへのbase tableの直接write・`admin_logs`の直接writeは不可。3 RPCとも`is_admin()`（active adminのみ・`EVENT_MANAGEMENT_NOT_AUTHORIZED`・認可はvalidationより先）、EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）、owner=postgres・SECURITY DEFINER・VOLATILE・`search_path=`。M15 `create_event(title, venue, event_date, description, image_url, ticket_url) -> uuid`（id・status=draft・created_by=auth.uid()・created_at・updated_at・first_published_atはサーバー管理）と、create/update共通の内部helper `internal.normalize_event_content`（EXECUTEはpostgresのみ）。validation契約: title/venue trim後1〜100文字・description NULL可で最大5000文字（blankはNULL）・event_dateはNOT NULLの有限値（過去・未来可、範囲制限なし、infinity不可）・ticket_urlは小文字https限定の現在の実装をそのまま記載（userinfo・内部空白不可、`HTTPS://`は拒否、raw IDNとIPv6リテラルは受理、RFC完全準拠ではない）・image_urlはevent-images bucketのobject key（`{uuid}.{jpg,jpeg,png,webp}`、大文字小文字を区別せず受理しlowercaseで保存、objectの実在は未確認）。M16 `update_event(target_event_id, expected_updated_at, 内容6項目) -> void`: 全置換（NULLはクリア）・statusは変更しない・no-opは成功だがUPDATE/`updated_at`/audit変更なし・stale versionはno-opより先にEVENT_CONFLICT・不存在/NULLはEVENT_NOT_FOUND。M17 `set_event_status(target_event_id, new_status, expected_updated_at) -> void`: 許可される遷移はdraft→public/cancelled、public→cancelled、cancelled（未公開）→draft、cancelled（公開済み）→publicのみで、同一statusを含むそれ以外はINVALID_EVENT_TRANSITION（未公開cancelledから直接publicは不可）・first_published_atは既存triggerが管理し中止/再公開でも上書きされない。楽観的同時実行制御: `expected_updated_at`必須（NULLはINVALID_EVENT_VERSION）・`SELECT ... FOR UPDATE`のlock下でマイクロ秒まで完全一致・不一致はEVENT_CONFLICT・date_trunc/丸め/許容幅なし。JSの`Date`経由でミリ秒に丸められる可能性があるため取得した`updated_at`文字列を加工せず返す方針（PostgREST/Supabase/Next.js経由のintegrationは未確認のTODO）。audit: 成功したwriteごとに`admin_logs`へ1行をatomicに記録（`create_event`={to_status}、`update_event`={changed_fields（固定順・値は保存しない）}、`set_event_status`={from_status,to_status}）。events管理のエラーコード（read 4種・write 12種）を整理し、trigger内部の例外は通常のAPI契約に含めない。解消した判断事項（events admin writeの方式・RPC分割・validation上限・status遷移・楽観的同時実行制御・audit・エラー）を12章・6.5から削除し、残る項目（公開/liveの並び順/pagination・物理DELETE・posts.event_idの検証・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsのanon公開範囲とwrite方式）を更新。`/admin/events`の画面とNext.jsの統合は引き続き未実装 |
 | v1.26 | 2026-09-28 | `posts.event_id`の参照境界（M18）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。4章・6.2・6.5・8章・12章: `live_report`のMVP上の意味を「LIVE参加後の感想」から「特定のLIVEに紐づくファン投稿」（参加予定・事前の投稿・当日の投稿・感想・LIVEレポート・思い出投稿等を含む。DB値`live_report`は維持し、UI名称は将来「LIVE投稿」等にできる。post_typeの変更は確定していない）へ明確化。DB invariant `posts_post_type_event_id_check`: `normal`は`event_id IS NULL`、`live_report`は`event_id IS NOT NULL`（旧`posts_live_report_requires_event_id_check`を置換）。`posts_insert_own`は従来の条件（active本人・`author_id = auth.uid()`・`status='published'`）を維持し、`event_id IS NULL OR EXISTS (SELECT 1 FROM public.events e WHERE e.id = posts.event_id)`を追加。EXISTSにはeventsのRLS `events_select_public`が適用されるため、参照できるeventはM11の公開範囲（publicと、一度公開された後のcancelled）と一致し、M11がsingle source of truthとなる（postsは`first_published_at`を直接参照せず、helper・trigger・RPCの追加もない）。draft・未公開cancelled・不存在は参照不可。`event_date`は参照可否に使わない（未来・過去のpublic LIVEとも可）。一度公開されたLIVEは中止後も既存のevent relationを保持し、新規投稿も可能で、eventのstatus変更でpostは変更されない。参加登録（`event_participants`）・block・profile属性は参照可否に影響せず、同一ユーザーが同一eventへ複数のLIVE投稿を作成できる。existence oracleなし（draft・未公開cancelled・不存在は同一のRLS拒否〔現在の実装ではSQLSTATE 42501〕で区別できず、FK違反に到達しない。恒久的なAPI error contractではない）。service_role/postgresはRLSをbypassする既知のtrust boundary（clientからevent_idを書けるwrite pathはINSERTのみで、UPDATEでは`event_id`・`post_type`を変更できない）。`posts_event_id_idx`を追加（関連投稿の取得API・UIは未実装）。セキュリティ維持要件: eventsのSELECT policyの追加・変更時は`posts.event_id`の参照可能範囲への影響を再評価する。解消した既知の課題（`posts.event_id`がdraft等を参照できる問題）を6.5・12章から除去。残る未決定事項（公開/liveの並び順/pagination・物理DELETE・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsの最終RLS/write方式・news・songs・Storage RLS）と、関連投稿UI・LIVE投稿作成UI・Next.js/PostgREST integrationが未実装である点は変更なし |
+| v1.27 | 2026-09-28 | `event_participants`の契約（M19・M20・M21）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.6・4章・8章・12章: 「base tableの読み取り（本人・active admin。RLS＋6列の列単位SELECT権限。M19）／本人のwrite（SECURITY DEFINER RPC `set_my_event_participation`。M20）／fan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`。M21）」の3層。authenticatedへのbase tableの直接writeは不可で、fan-facingな一般のSELECT policyもない。status（going/attended/cancelled。`events.status=cancelled`とは別概念）・visibility（public/private/attended。**defaultをpublicからprivateへ訂正**）の意味を明記。本人のreadはaccount statusに関係なく可（bannedを含む。UIの`/restricted`誘導とは別レイヤー）。M20: active本人のみ・desired-state API（NULLは「変更しない」ではない・同一状態はno-op）・新規行はpublic eventのみ（draft/cancelled/不存在は区別されない同一エラー）・goingはevent_date非依存・attendedは`event_date <= now()`で過去のpublic eventには直接登録可・新規cancelled行は不可・public eventの既存行は全遷移を許可（attendedは終端でない）・cancelled/draftのeventの既存行はno-op・visibilityのみの変更・cancelledへの変更のみ許可し肯定する方向への変更は拒否・physical DELETEなし・event FOR SHARE/participant FOR UPDATE（lock順events→participants）とINSERT ON CONFLICT DO NOTHING・M17のFOR UPDATEとの直列化・楽観的同時実行制御なし・エラー6種。M21: anon不可・active/suspendedの閲覧者のみ（banned/profileなし/uid NULLは0行）・`events.status=public`のみ（cancelledは公開履歴に関係なく0行。M11の公開範囲より狭い）・going/public・attended/public・attended/attendedのみ表示・participantのprofile active/suspendedのみ・双方向block・adminもbypassなし・返却6列（visibility・created_at・件数を返さない）・status_filter・keyset pagination（username,id）・page_size clamp 1〜100・cursor対象の存在は検証しない・不正UUIDは22P02の場合あり・検索/件数/詳細RPCなし・エラー2種。SECURITY DEFINER RPCのため、events/profiles/blocks/visibilityの変更時は`get_event_participants`の再評価が必要（維持要件）。M18（LIVE投稿は参加表明に依存しない）は不変。未実装: 件数（将来は同一のprivacy条件を使うこと）・検索・Realtime・通知・follow/DM・check-in/ticket検証・admin訂正・UI・Next.js/PostgREST integration |
