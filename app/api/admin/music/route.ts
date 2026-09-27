@@ -21,6 +21,7 @@ type ErrorCode =
   | "UNSUPPORTED_IMAGE_TYPE"
   | "IMAGE_TYPE_MISMATCH"
   | "UPLOAD_FAILED"
+  | "LIST_FAILED"
   | string; // widened for pass-through DB error codes (see mapSongDbError)
 
 function errorResponse(code: ErrorCode, status: number) {
@@ -28,6 +29,10 @@ function errorResponse(code: ErrorCode, status: number) {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// Server-fixed; not client-configurable (A2 §12).
+const LIST_PAGE_SIZE = 20;
 
 /**
  * POST /api/admin/music
@@ -146,4 +151,84 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ id: songId }, { status: 201, headers: { "Cache-Control": "no-store" } });
+}
+
+/**
+ * GET /api/admin/music
+ *
+ * Read-only admin song list (A2). Thin HTTP wrapper around get_admin_songs()
+ * (S4a — see supabase/migrations/20260928090000_songs_admin_list.sql),
+ * which is not modified and remains the sole authority for search/status
+ * validation, keyset cursor semantics, and ordering. Query parameters are
+ * only pre-validated here for *shape* (UUID / ISO date), so a malformed
+ * value never surfaces as a raw Postgres type-cast error (22P02/22007) —
+ * every other validation (search length, status membership, the
+ * "after_release_date without after_id" cursor error, etc.) is left to the
+ * RPC itself and mapped from its error string via mapSongDbError().
+ *
+ * No Origin/same-origin check: this is a read-only endpoint that performs
+ * no mutation (A2 §22) — the existing POST/PATCH/cleanup routes' Origin
+ * checks are unchanged. Authorization is still mandatory and identical to
+ * every other route here: requireActiveAdmin() must pass regardless of
+ * app/admin/layout.tsx's own guard, since this URL can be requested
+ * directly.
+ *
+ * `page_size` is fixed server-side (LIST_PAGE_SIZE) and is not a query
+ * parameter the client can change (A2 §12). `has_more` is computed here
+ * (rows returned === LIST_PAGE_SIZE) since get_admin_songs() itself
+ * returns no total count.
+ */
+export async function GET(request: Request) {
+  let supabase;
+  try {
+    supabase = await createSupabaseServerClient();
+  } catch (error) {
+    console.error("list songs: failed to create Supabase client", error);
+    return errorResponse("LIST_FAILED", 500);
+  }
+
+  const authResult = await requireActiveAdmin(supabase);
+  if (!authResult.authorized) {
+    return authResult.reason === "UNAUTHENTICATED"
+      ? errorResponse("UNAUTHORIZED", 401)
+      : errorResponse("FORBIDDEN", 403);
+  }
+
+  const url = new URL(request.url);
+  const search = url.searchParams.get("search");
+  const status = url.searchParams.get("status");
+  const afterReleaseDate = url.searchParams.get("after_release_date");
+  const afterId = url.searchParams.get("after_id");
+
+  if (status !== null && status !== "draft" && status !== "public") {
+    return errorResponse("INVALID_SONG_STATUS_FILTER", 400);
+  }
+
+  if (afterId !== null && !UUID_SHAPE.test(afterId)) {
+    return errorResponse("INVALID_SONG_CURSOR", 400);
+  }
+
+  if (afterReleaseDate !== null && !ISO_DATE.test(afterReleaseDate)) {
+    return errorResponse("INVALID_SONG_CURSOR", 400);
+  }
+
+  const { data, error } = await supabase.rpc("get_admin_songs", {
+    search,
+    status_filter: status,
+    after_release_date: afterReleaseDate,
+    after_id: afterId,
+    page_size: LIST_PAGE_SIZE,
+  });
+
+  if (error) {
+    const mapped = mapSongDbError(error.message);
+    return errorResponse(mapped.code, mapped.status);
+  }
+
+  const songs = data ?? [];
+
+  return NextResponse.json(
+    { songs, has_more: songs.length === LIST_PAGE_SIZE },
+    { status: 200, headers: { "Cache-Control": "no-store" } }
+  );
 }

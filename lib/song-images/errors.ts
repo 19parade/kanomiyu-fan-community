@@ -18,6 +18,11 @@ const DB_ERROR_STATUS: Record<string, number> = {
   INVALID_SONG_VERSION: 400,
   SONG_NOT_FOUND: 404,
   SONG_VERSION_CONFLICT: 409,
+  // get_admin_songs() (A2, GET /api/admin/music) — see
+  // supabase/migrations/20260928090000_songs_admin_list.sql.
+  SONG_SEARCH_TOO_LONG: 400,
+  INVALID_SONG_STATUS_FILTER: 400,
+  INVALID_SONG_CURSOR: 400,
 };
 
 export type MappedSongDbError = { code: string; status: number };
