@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.28
+- ステータス: Draft v1.29
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -70,7 +70,7 @@
 | 16 | 利用規約 | 静的ページ。 |
 | 17 | プライバシーポリシー | 静的ページ。 |
 | 18 | コミュニティガイドライン | 静的ページ（第6章の禁止事項を反映）。 |
-| 19 | 楽曲一覧・楽曲詳細 | かのうみゆの楽曲情報を一覧・詳細表示する機能（`songs`テーブル、`/music`・`/music/[id]`・管理画面`/admin/music`）。公開状態（`draft`/`public`）を持ち、公開の読み取り（誰でも閲覧可）とadminの管理（作成・内容の更新・公開状態の変更）はDBレベルで実装済み。画面・Storage・Next.jsの統合は未実装。詳細は6.10参照。 |
+| 19 | 楽曲一覧・楽曲詳細 | かのうみゆの楽曲情報を一覧・詳細表示する機能（`songs`テーブル、`/music`・`/music/[id]`・管理画面`/admin/music`）。公開状態（`draft`/`public`）を持ち、公開の読み取り（誰でも閲覧可）とadminの管理（作成・内容の更新・公開状態の変更）はDBレベルで実装済み。カバー画像用のStorage（`song-images`バケット・RLS・アップロード/差し替え/削除のオーケストレーション・手動cleanup）とそのHTTP API（`POST /api/admin/music`・`PATCH /api/admin/music/[id]`・`POST /api/admin/music/images/cleanup`）も実装済み。`/music`・`/music/[id]`・`/admin/music`の画面（UI）は未実装。詳細は6.10・9章参照。 |
 
 ---
 
@@ -153,7 +153,7 @@ Next.js App Router構成を前提とする。
 /admin/reports     通報対応
 /admin/events      LIVE管理（DBの契約: 一覧=`get_admin_events`、詳細・編集データの取得=`get_admin_event`、作成=`create_event`、内容の保存=`update_event`、status変更=`set_event_status`。6.5参照。画面は未実装）
 /admin/news        ニュース管理
-/admin/music       楽曲管理
+/admin/music       楽曲管理（DBの契約: 一覧=`get_admin_songs`、詳細・編集データの取得=`get_admin_song`、公開状態の変更=`set_song_status`。HTTPの契約: 作成・カバー画像アップロード=`POST /api/admin/music`、内容更新・カバー画像差し替え/削除=`PATCH /api/admin/music/[id]`、未参照カバー画像の手動cleanup=`POST /api/admin/music/images/cleanup`。6.10・9章参照。画面は未実装）
 /admin/logs        管理者操作ログ
 ```
 
@@ -861,7 +861,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 ### 6.10 songs
 
-**目的**: 楽曲情報の管理（`/music`・`/music/[id]`・`/admin/music` 用）。公開の読み取り、adminの読み取り・作成・内容更新・公開状態の変更は、DBレベルで実装・検証済み（S1〜S7）。画面（Next.js）・Storage・Supabase client経由のintegrationは未実装（下記「実装状況」参照）。
+**目的**: 楽曲情報の管理（`/music`・`/music/[id]`・`/admin/music` 用）。公開の読み取り、adminの読み取り・作成・内容更新・公開状態の変更は、DBレベルで実装・検証済み（S1〜S7）。カバー画像用のStorage（`song-images`バケット・RLS。ST1・ST2）、adminのアップロード/差し替え/削除のオーケストレーションと業務HTTP API（ST3・ST4）、手動cleanup API（ST5）も実装・検証済み。`/music`・`/music/[id]`・`/admin/music`の画面（UI）のみ未実装（下記「実装状況」参照。song-images Storageの詳細は9章参照）。
 
 | カラム | 型 | 説明 |
 |---|---|---|
@@ -906,7 +906,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 *adminの読み取りRPC（実装済み。S4a・S4b）*: active admin（`public.is_admin()`）のみ。EXECUTEはauthenticated・postgresのみ（PUBLIC・anon・service_roleは不可）。未認可は`SONG_MANAGEMENT_NOT_AUTHORIZED`（0行にはしない。全ての検証・検索より先に判定する）。
 - `get_admin_songs(search text DEFAULT NULL, status_filter text DEFAULT NULL, after_release_date date DEFAULT NULL, after_id uuid DEFAULT NULL, page_size integer DEFAULT 20) RETURNS TABLE (id, title, release_date, status, updated_at)`（STABLE）。`draft`・`public`の両方を`release_date`に関係なく返す。検証の順序は認可 → search → status_filter → cursor → page_size。`search`はtitleのみを対象とし、前後の空白（U+0020・tab・LF・CR・U+3000）をtrimし、空ならfilterなし、正規化後の長さは最大100文字（超過は`SONG_SEARCH_TOO_LONG`）、大文字小文字を区別しない部分一致で、`%`・`_`・`\`はwildcardではなく通常の文字として扱う。`status_filter`はNULL・`draft`・`public`の完全一致のみ（それ以外は`INVALID_SONG_STATUS_FILTER`）。並び順とcursorの契約は公開一覧と同じ（`INVALID_SONG_CURSOR`を含む）。filterは全てAND。
 - `get_admin_song(target_song_id uuid) RETURNS TABLE (id, title, release_date, cover_image_url, description, status, created_at, updated_at)`（STABLE）。`draft`・`public`の両方の1行を返し、不存在・NULLは0行（エラーにしない）。列は明示的に列挙しており（`SELECT *`ではない）、将来の列の追加が自動では返らない。
-- `created_at`・`updated_at`はDBのtimestamptzを加工せずそのまま返す。**`updated_at`は書き込みRPC（`update_song`・`set_song_status`）のversion tokenで、マイクロ秒まで完全一致する必要がある。フロントエンドでJSの`Date`に変換してミリ秒に丸めた値を書き込みRPCへ返すと、`SONG_VERSION_CONFLICT`になる可能性がある。取得した`updated_at`の文字列を加工せずに返すこと**（Next.js / PostgREST経由のintegrationは未確認）。
+- `created_at`・`updated_at`はDBのtimestamptzを加工せずそのまま返す。**`updated_at`は書き込みRPC（`update_song`・`set_song_status`）のversion tokenで、マイクロ秒まで完全一致する必要がある。フロントエンドでJSの`Date`に変換してミリ秒に丸めた値を書き込みRPCへ返すと、`SONG_VERSION_CONFLICT`になる可能性がある。取得した`updated_at`の文字列を加工せずに返すこと**。`PATCH /api/admin/music/[id]`（ST4。9章参照）は`expected_updated_at`をmultipartのraw文字列として受け取り、JSの`Date`へ変換せず`update_song`へそのまま渡す実装で、実HTTPリクエストによりマイクロ秒精度の保持を確認済み（`set_song_status`側の同種のNext.js/PostgREST経由のintegrationは未実装・未確認）。
 
 *adminの書き込みRPC（実装済み。S5〜S7）*: active adminのみ（認可は他の全ての検証より先。未認可は`SONG_MANAGEMENT_NOT_AUTHORIZED`）。EXECUTEはauthenticated・postgresのみ（PUBLIC・anon・service_roleは不可）。owner=postgres・SECURITY DEFINER・VOLATILE。成功した変更ごとに`admin_logs`へ1行を、変更とatomicに記録する（audit失敗時は変更もrollbackされる。no-op・validationエラー・version conflict・not found・未認可では記録しない）。
 - `create_song(title text, release_date date DEFAULT NULL, cover_image_url text DEFAULT NULL, description text DEFAULT NULL) RETURNS uuid`: 常に`status='draft'`で作成する（status引数はない）。`id`・`created_at`・`updated_at`はDBが生成し、戻り値は新しい楽曲のidのみ（作成後は`get_admin_song`で再取得する）。audit: `action='create_song'`、`target_type='song'`、`detail={"to_status":"draft"}`。
@@ -936,7 +936,10 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 *セキュリティ維持要件*: `get_public_songs`・`get_public_song`はSECURITY DEFINER（owner=postgres）でbase tableのRLSをbypassするため、公開の述語（`status = 'public'`）を関数内に明示している。`status`の意味を変更する場合は、公開の2本のRPCを必ず再評価する。
 
-**実装状況**: 実装済み（DBレベル）: schema・公開状態（S1）・公開の一覧と詳細（S2・S3）・adminの一覧と詳細（S4a・S4b）・作成（S5）・内容の更新（S6）・公開状態の変更（S7）・`admin_logs`への記録・楽観的同時実行制御。未実装: `song-images`バケットとStorage policy・adminの画像アップロードの流れ・画像のobjectの実在の確認・画像URLの解決・`/music`・`/music/[id]`・`/admin/music`の画面・Next.js / Supabase client経由のRPCのintegration・物理DELETEのRPC（不要な楽曲は`draft`へ戻せるが、postgres・service_roleによる直接のDELETE自体を禁止するconstraintやtriggerは現在ない。削除の方針は未決定）・外部の配信サービスのリンク・アルバム/アーティストのDB・歌詞の専用機能。
+**実装状況**:
+- 実装済み（DBレベル）: schema・公開状態（S1）・公開の一覧と詳細（S2・S3）・adminの一覧と詳細（S4a・S4b）・作成（S5）・内容の更新（S6）・公開状態の変更（S7）・`admin_logs`への記録・楽観的同時実行制御。
+- 実装済み（Storage・アプリケーション層。ST1〜ST5。詳細は9章参照）: `song-images`バケットとStorage RLS policy（ST1・ST2）／admin向けの画像アップロード・差し替え・削除のオーケストレーションを含む業務HTTP API `POST /api/admin/music`・`PATCH /api/admin/music/[id]`（ST3・ST4）／未参照かつ24時間以上経過したStorage objectをactive adminが手動で回収するcleanup API `POST /api/admin/music/images/cleanup`（ST5）。
+- 未実装: `/music`・`/music/[id]`・`/admin/music`の画面（UI）・画像のobjectの実在の確認（`create_song`/`update_song`は呼び出し時にStorage object の実在を確認しない。9章参照）・画像の公開URL解決helper（画面が存在しないため未着手）・自動/定期cleanup（cron・Vercel Cron等。現在は手動APIのみ）・物理DELETEのRPC（不要な楽曲は`draft`へ戻せるが、postgres・service_roleによる直接のDELETE自体を禁止するconstraintやtriggerは現在ない。削除の方針は未決定）・外部の配信サービスのリンク・アルバム/アーティストのDB・歌詞の専用機能・画像のresize/再エンコード/EXIF除去・Songs管理APIの専用rate limit。
 
 ---
 
@@ -1074,7 +1077,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 - 対象6テーブル（`events`・`event_participants`・`news`・`songs`・`login_attempts`・`app_settings`）は、RLS無効かつanon/authenticatedにtableの全権限が付与された状態だったため、M9でdeny-by-defaultにした。M9直後の状態は、6テーブルとも RLS有効（FORCEなし）・policy 0件・anonとauthenticatedのtable権限なし・列単位のACLなし。postgres・service_roleの既存ACLは変更していない。
 - 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。さらに、M19で`event_participants`のprivacy baseline（`visibility`のdefaultを`private`へ変更、本人とactive adminのSELECT境界）を、M20で本人のwrite境界（SECURITY DEFINER RPC `set_my_event_participation`）を、M21でfan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`）を追加した（6.6参照。authenticatedへのbase tableの直接writeは許可していない）。また、S1〜S7で`songs`の公開状態（`status`列）・公開の読み取り（`get_public_songs`・`get_public_song`）・adminの読み取り（`get_admin_songs`・`get_admin_song`）・adminの書き込み（`create_song`・`update_song`・`set_song_status`）を追加した（いずれもSECURITY DEFINER RPC。base tableのRLS・権限は変更していない。6.10参照）。したがって現在は、`news`・`app_settings`の2テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
 - default privilege: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`により、postgresが今後`public`スキーマに作成するtableへのanon/authenticatedの自動的なtable権限付与を除去した。service_roleのdefault privilege、sequence・function・typeのdefault privilege、schema権限は変更していない。今後もschemaの変更はmigration経由で行う方針を維持する。`supabase_admin`が作成するtableのdefault privilegeは変更していない。
-- 公開読み取り（news）が必要な機能は、tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`songs`は、公開の読み取り（`get_public_songs`・`get_public_song`のRPC。anonを含む）、adminの読み取り（`get_admin_songs`・`get_admin_song`）、adminの書き込み（`create_song`・`update_song`・`set_song_status`）が利用できる（いずれもDBレベル。画面・Storage・Next.jsの統合は未実装）。`event_participants`は、本人のwrite（`set_my_event_participation`のRPC）、本人とadminのread（base tableのRLS）、fan-facingな参加者一覧（`get_event_participants`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
+- 公開読み取り（news）が必要な機能は、tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`songs`は、公開の読み取り（`get_public_songs`・`get_public_song`のRPC。anonを含む）、adminの読み取り（`get_admin_songs`・`get_admin_song`）、adminの書き込み（`create_song`・`update_song`・`set_song_status`）が利用できる（いずれもDBレベル）。カバー画像用の`song-images` Storageとadminの業務HTTP API（作成・更新・手動cleanup）もST1〜ST5で実装済み（9章参照）。`/music`・`/music/[id]`・`/admin/music`の画面（UI）のみ未実装。`event_participants`は、本人のwrite（`set_my_event_participation`のRPC）、本人とadminのread（base tableのRLS）、fan-facingな参加者一覧（`get_event_participants`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
 
 ### 現在のDB実装状況と最終要件の区別（events / event_participants / news / songs / login_attempts / app_settings）
 
@@ -1190,13 +1193,13 @@ RLSポリシーから`profiles.status='active'`かどうかを判定する専用
 | post-images | 投稿添付画像 | 投稿者本人のみアップロード可、公開読み取り可（`posts.status`に連動して非表示制御） |
 | event-images | LIVE告知画像 | admin のみアップロード可、公開読み取り可 |
 | news-images | ニュース記事添付画像 | admin のみアップロード可。一般ユーザーの読み取り可否はニュース本文と同じ条件（`news.status='published'`かつ`published_at<=現在時刻`）に連動。adminはdraft・予約公開・公開済みのいずれも閲覧・管理可能 |
-| song-images | 楽曲ジャケット画像 | admin のみアップロード可、公開読み取り可 |
+| song-images | 楽曲ジャケット画像 | admin のみアップロード可、公開読み取り可（**実装済み。ST1〜ST5。詳細は下記「song-images: 実装済みStorage契約」参照**） |
 
 - 各バケットで許可するのは JPEG / PNG / WebP のみとし、最大ファイルサイズは 5MB とする（8章「画像アップロード制限」参照）。
 - バケットごとにStorage RLSポリシーを設定し、アップロード権限を上記の通り制限する。
-- 上記5バケットはmigrationで管理する（確定）。原則としてmigration SQLでバケットを作成し、Storage policyと合わせてバージョン管理する。具体的な作成方法（SQL文の形式等）は、実装時点のSupabase公式仕様を確認して決定する。公式推奨方法や実環境上の制約と衝突する場合は、独自に仕様変更せず報告するものとする。
-- 各バケットに対応するDBカラム（`profiles.avatar_url`、`posts.image_url`、`events.image_url`、`news.image_url`、`songs.cover_image_url`）には、Storageのobject key（バケット内の相対パス）を保存し、完全なURLは保存しない（確定。6.1/6.2/6.5/6.9/6.10参照）。表示時はアプリ側の共通処理でURLを解決する。
-- `song-images`バケットとそのStorage policy、adminの画像アップロードの流れ、画像URLの解決は、現在は未実装である。`songs.cover_image_url`はDBのRPCがobject keyの形式（`{uuid}.{ext}`。extはlowercaseの`jpg`・`jpeg`・`png`・`webp`のみ）だけを検証し、objectの実在は確認しない（6.10参照）。
+- 上記5バケットはmigrationで管理する（確定）。原則としてmigration SQLでバケットを作成し、Storage policyと合わせてバージョン管理する。具体的な作成方法（SQL文の形式等）は、実装時点のSupabase公式仕様を確認して決定する。公式推奨方法や実環境上の制約と衝突する場合は、独自に仕様変更せず報告するものとする。`song-images`はこの方針どおりmigrationで実装済み（ST1・ST2）。`avatars`・`post-images`・`event-images`・`news-images`の4バケットは、本バージョンでも引き続き未実装（plannedのまま。実DBのバケット一覧を確認済み。song-imagesの実装を理由に他バケットも実装済みとは記載しない）。
+- 各バケットに対応するDBカラム（`profiles.avatar_url`、`posts.image_url`、`events.image_url`、`news.image_url`、`songs.cover_image_url`）には、Storageのobject key（バケット内の相対パス）を保存し、完全なURLは保存しない（確定。6.1/6.2/6.5/6.9/6.10参照）。表示時はアプリ側の共通処理でURLを解決する（`song-images`向けの画面が未実装のため、`songs.cover_image_url`から公開URLを解決するhelperも未着手）。
+- `song-images`バケット・Storage RLS policy・adminの画像アップロード/差し替え/削除のオーケストレーション・未参照objectの手動cleanupは実装・検証済み（ST1〜ST5）。`create_song`/`update_song`はいずれもStorage object の実在を確認せず（object keyの形式のみを検証。6.10参照）、通常のアプリケーションフローはアップロード成功後のkeyを渡す前提である。この前提を信頼しない直接のRPC呼び出し（trusted direct caller）は、存在しないkeyを`cover_image_url`へ設定できる。
 - `post-images`の読み取り制御は`posts.status`と連動させ、`hidden`/`deleted`の投稿に紐づく画像を一般ユーザーが直接読み取れないようにする（確定。Storage側のアクセス制御で実現する方針）。object keyに`post_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`posts`行を特定し`posts.status`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。`avatars`・`event-images`・`song-images`にはこの連動要件は無い（`profiles`/`events`/`songs`には`posts`のような非表示状態が存在しないため）。
 - `news-images`の読み取り制御は、ニュース本文（6.9「表示制御の方針」）と同一の条件に連動させる（確定）。一般ユーザーが画像を閲覧できるのは`news.status='published'`**かつ**`published_at<=現在時刻`の場合のみとし、`draft`の場合、および`status='published'`でも`published_at`が未来（予約公開）の場合は、一般ユーザーは閲覧不可でadminのみ閲覧可能とする。これは`post-images`の`posts.status`連動と同じ考え方であり、画像のobject key（または画像URL）を直接知っている一般ユーザーによる、公開前・予約公開前コンテンツの画像への事前アクセスを防ぐことを目的とする。管理者はdraft・予約公開・公開済みのいずれの状態でも画像を閲覧・管理できる。object keyに`news_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`news`行を特定し`news.status`・`published_at`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。
 
@@ -1217,6 +1220,71 @@ song-images/{uuid}.{ext}
 - `avatars`・`post-images` は先頭フォルダを `user_id`（`auth.uid()`と一致する値）とし、Storage RLSポリシーで `storage.foldername(name)[1] = auth.uid()::text` 相当の条件を用いて、他ユーザーの領域へのアップロードを禁止する。
 - `event-images`・`news-images`・`song-images` はユーザーフォルダを持たず、INSERTをadmin(`is_admin()`)のみに制限することでアクセス制御する（`events`/`news`/`songs`がいずれも管理者のみによる作成・更新であるため。8章のRLS方針表参照）。
 - `{ext}` はアップロード制限で許可したMIMEタイプに対応する拡張子のみを許可する。
+
+### song-images: 実装済みStorage契約（ST1〜ST5。確定・実装済み）
+
+`song-images`は5バケットのうち唯一、bucket・Storage RLS policy・adminのアップロード/差し替え/削除のオーケストレーション・未参照objectの手動cleanupまで実装・検証済みである。他4バケット（`avatars`・`post-images`・`event-images`・`news-images`）は本バージョンでも未実装（planned）のままであり、この節の内容は他バケットへ拡大適用しない。
+
+**bucket設定（実装済み。ST1）**: `id/name = song-images`・`public = true`・`file_size_limit = 5242880`（5MiB）・`allowed_mime_types = image/jpeg, image/png, image/webp`。
+
+**public bucketのtrade-off（PMがMVPで受容済み。確定）**: Storage object keyまたは公開URLを知っている第三者は、対象のsongが`draft`であっても画像bytesを取得できる。`public → draft`に戻しても、既知のURLやCDN/browser cacheへのアクセスを取り消す仕組みではない。songのdraft/public状態はDBレベルの公開境界（6.10の`get_public_song(s)` RPC）であり、Storageの非公開境界ではない。
+
+**DBに保存する値**: `songs.cover_image_url`という列名だが、保存する値は完全URLではなく、Storage object key（`{uuid}.{ext}`。例: `550e8400-e29b-41d4-a716-446655440000.jpg`）である（6.10参照）。
+
+**object key契約（実装済み。ST2/S5）**: root直下の`{uuid}.{jpg|jpeg|png|webp}`のみ（folder不可）。UUID部分のhexは大文字小文字を受理し、変換しない。拡張子はlowercaseのみで、DB/Storage policyの契約としては`jpg`・`jpeg`・`png`・`webp`の4種を受理する。一方、アプリケーションのアップロード処理（`lib/song-images/upload.ts`）はcanonical extensionとして`JPEG → jpg`・`PNG → png`・`WebP → webp`を生成するため、通常の新規アップロードでは`.jpeg`（拡張子4文字）を生成しない。DB/Storageの受理契約とアプリの生成契約は意図的に異なる（前者は将来の直接RPC呼び出し等も想定した広めの契約、後者は現在の唯一のアップロード経路が生成する狭い契約）。
+
+**Storage RLS policy（実装済み。ST2改訂版）**: `storage.objects`に`song-images`専用の3 policy。UPDATE policyは無い。
+- `song_images_admin_select`: `authenticated` AND active admin（`is_admin()`）AND `bucket_id='song-images'`。metadata（`list()`）の一覧はactive adminのみで、anon・一般ユーザーは0件（public bucketによる画像bytesの直接配信とは別の権限境界）。
+- `song_images_admin_insert`: active adminのみ。`internal.is_valid_song_image_key(name)`を満たすkeyのみ許可。
+- `song_images_admin_delete`: active admin AND `internal.can_delete_song_image(name)`がtrueの場合のみ。`can_delete_song_image()`は「active admin・valid key・`songs.cover_image_url`から現在未参照（draft/publicを区別せず、1件でも参照があればfalse）」を満たす場合のみtrue。
+- overwrite禁止: UPDATE policyが無いことに加え、アプリのアップロードも常に`upsert=false`を使用する。画像の差し替えは常に新しいUUID keyの生成によって行う。
+- `storage.objects`への直接SQL DELETEは、既存のStorage内部保護（`storage.protect_delete()`）により拒否される。実際の削除は常にStorage API（`remove()`）経由で、user-scoped clientを通じて行う。
+
+**adminのアップロード/差し替え/削除オーケストレーション（実装済み。ST3・ST4）**: 現在実装済みのHTTP write境界は次の2エンドポイントのみ。ST3の原始的なアップロード専用エンドポイント`POST /api/admin/music/images`は、この2エンドポイントへ統合されたことにより現在は存在しない（復活させない）。
+- `POST /api/admin/music`（作成）: Origin検証 → 認証 → active admin認可 → multipart検証 → 画像が添付されていればStorageへアップロード（server側でランダムUUIDのkeyを生成。client指定のkeyは受理しない） → `create_song`（S5。無変更のまま利用） → `create_song`が失敗した場合はアップロード済み画像をbest-effort補償削除。
+- `PATCH /api/admin/music/[id]`（更新）: Origin検証 → 認証 → active admin認可 → 対象song確認（`get_admin_song`で現在の`cover_image_url`と存在を取得） → multipart検証（`expected_updated_at`必須のraw文字列・`cover_action`必須） → `cover_action`に応じた処理 → `update_song`（S6。無変更のまま利用。`set_song_status`は呼ばない） → 失敗時は新規アップロード分をbest-effort補償削除 → 成功時は旧画像をbest-effort削除。
+- `cover_action`は`keep`・`replace`・`remove`の3値のみ（厳密小文字一致。fileの有無から推測しない）。`replace`のみfile必須、`keep`・`remove`ではfile自体を禁止する。`update_song`は全置換RPCのため、`keep`でも現在のcover_image_urlの値を再送する。
+- 画像はserver側でmagic bytes（先頭バイト署名）を検証し、client申告のMIME（Content-Type）のみを信用しない。宣言MIMEと実バイトの不一致は拒否する。最大5MiB・JPEG/PNG/WebPのみ。
+- 通常のupload/delete/cleanupオーケストレーションに`service_role`・`SUPABASE_SERVICE_ROLE_KEY`は使用しない。常にactive adminのuser-scoped Supabase client（Storage RLSが実際に評価される）を使用する。fixture/テスト用途での一時的なAdmin API（service_role）利用は、この方針とは区別される別の目的のものである。
+- Origin検証: 上記2エンドポイントおよびcleanup APIは、Next.jsのRoute Handlerが（Server Actionsと異なり）自動のOrigin/Host CSRF保護を持たないため、application側で`Origin`ヘッダとHost（`X-Forwarded-Host`優先、次点`Host`）を比較するsame-origin検証を実装している。`Origin`ヘッダ欠落はfail closed（拒否）。SameSite cookieによる保護とこのsame-origin検証を用いており、独自のCSRF tokenフレームワークは実装していない。実Vercelプロキシ経由での本番環境における`X-Forwarded-Host`の実挙動検証はまだ行っておらず、デプロイ前の確認事項として残る。
+- 非atomicなlifecycle: StorageとPostgresは別システムのため、完全なtransactionではない。アップロード成功後のDB失敗、DB成功後の旧画像削除失敗、補償削除自体の失敗などにより、未参照のStorage objectが残る可能性がある。これは設計上許容されており、ST5のcleanupで回収する。
+- shared image key・TOCTOU: 複数のsongが同一のcover keyを参照していても、1件のsongから参照を外すだけでは削除されない（`can_delete_song_image()`が他songからの参照を検知する）。applicationが事前に確認した参照状態そのものを削除権限にはせず、実際のStorage DELETE実行時に`can_delete_song_image()`が現在のDB状態を再確認する。ただしこれはStorageとPostgresを跨ぐ完全なcross-system atomicityを保証するものではない。
+
+**未参照objectの手動cleanup（実装済み。ST5）**: `POST /api/admin/music/images/cleanup`。GETでのcleanupは実装しない（削除を伴うため）。requestからobject keyを指定して特定のobjectを削除するAPIではなく、cleanup対象は常にserver側が発見・決定する。
+- 認可: same-origin検証 → 認証 → active admin認可（`service_role`不使用）の順。
+- cleanup candidateの定義: 「object keyが`{uuid}.{jpg|jpeg|png|webp}`契約を満たす」AND「`created_at <= cleanupStartedAt - 24時間`」の両方を満たすStorage object。`cleanupStartedAt`はrequest開始時に1回だけ固定し、scan中に動かさない。24時間未満・無効なkey形式・folder・`created_at`がNULL/parse不能/未来の場合は、いずれも削除しない（fail-safe）。境界は`created_at <= cutoff`でeligible（実装・テスト済み）。
+- 最終的な削除可否は、candidate判定だけで決めず、必ず実際のStorage `remove()`呼び出し（user-scoped client）を経由し、`can_delete_song_image()`が現在のDB参照状態を再確認する。参照中のobject（draft/public問わず、他songからの共有参照を含む）は削除されない。
+- scanは`list()`のみを使用し、`storage.objects`への直接SQL問い合わせは行わない。`sortBy created_at asc`によるoldest-first scanで、`PAGE_SIZE=100`ごとにpaginationする。実Storageバックエンドで`sortBy created_at`の昇順/降順が正しく機能することを実測済みだが、Storage SDK v1の`list()`の`sortBy.column`は型上任意の文字列であり、将来のバックエンドでもこの挙動が保証される公式な長期契約かどうかは未確認の懸念として残る。
+- 上限: 1 requestあたり最大`MAX_SCAN_OBJECTS=1000`件をscanし、candidateが`MAX_CLEANUP_OBJECTS=100`件に達するか、scan件数が上限に達した時点で停止する（無制限のscan/deleteではない）。scan終了後にまとめて削除する設計（scan-first）とし、途中のlist失敗による削除の中断を避ける。
+- response（aggregateのみ。object key一覧は返さない）: `scanned`・`eligible`・`deleted`・`skipped`・`failed`・`scan_limit_reached`。
+- 複数のadminが同時にcleanupを実行しても安全に完走することを実Storage APIで確認済み。同一objectについて一方が削除に成功し、他方がuncollected/skipped相当になることは正常な挙動であり、fatal corruptionとして扱わない。繰り返し実行（idempotency）も安全。
+- 新しい`admin_logs`のactionは追加していない（DB migrationを伴うため対象外）。cleanupの実行記録はapplication logのみで、DB上の永続的な監査記録は無い。
+- 自動実行主体（cron・Vercel Cron・定期cleanup等）は実装していない。現在はactive adminによる手動実行のみ。
+
+**用語（確定）**: scan段階で見つかった、valid key形式かつ24時間以上経過したStorage objectは「cleanup candidate」と呼び、単に24時間が経過しただけの時点では「確定orphan」とは呼ばない。実際の削除時に`can_delete_song_image()`によって現在未参照であることまで確認されたものだけを、削除実行の文脈で orphan として扱ってよい。
+
+**現在実装済みのHTTP route一覧（song-images関連）**:
+```
+POST  /api/admin/music                 楽曲の作成（カバー画像は任意。ST4）
+PATCH /api/admin/music/[id]             楽曲の内容更新・カバー画像のkeep/replace/remove（ST4）
+POST  /api/admin/music/images/cleanup   未参照かつ24時間以上経過したカバー画像の手動cleanup（ST5）
+```
+旧`POST /api/admin/music/images`（ST3の原始的なアップロード専用エンドポイント）は現在存在しない。上記はいずれもHTTP APIであり、`/music`・`/music/[id]`・`/admin/music`のUI（画面）とは別（5.4・5.1参照。UIは未実装）。
+
+**エラーコード（application層。実装済み。ST3〜ST5）**: `create_song`/`update_song`のDBエラー文字列は、そのままアプリケーションのエラーコードとして再利用し、`SONG_MANAGEMENT_NOT_AUTHORIZED→403`・`INVALID_SONG_*→400`・`SONG_NOT_FOUND→404`・`SONG_VERSION_CONFLICT→409`・未知のエラー→`500`にマッピングする。DBの生エラーテキストはクライアントへ転送しない。アップロード関連は`UNAUTHORIZED`・`FORBIDDEN`・`ORIGIN_INVALID`・`INVALID_REQUEST`・`INVALID_UPLOAD`・`FILE_TOO_LARGE`・`UNSUPPORTED_IMAGE_TYPE`・`IMAGE_TYPE_MISMATCH`・`UPLOAD_FAILED`。cleanup専用は`CLEANUP_SCAN_FAILED`（最初のStorage `list()`自体が失敗し候補探索不能。502）・`CLEANUP_FAILED`（その他の予期しない内部エラー。500）。個別candidateの削除失敗はHTTPエラーにせず、response本体の`failed`フィールドで表現する。
+
+**既知の懸念（v1.29時点で確定的に記録する未解決事項）**:
+- public bucketであるため、draft songの画像もobject key既知の第三者が閲覧できる（上記「public bucketのtrade-off」参照）。
+- `public → draft`に戻しても、既知URL・CDN/browser cacheの失効は保証されない。
+- StorageとPostgresは完全なcross-system atomicityを持たない（非atomicなlifecycle）。
+- cleanupは手動実行のみで、自動/定期実行は未実装。
+- Storage SDKの`list()`における`created_at`ソートの長期的な公式保証は未確認（現行バックエンドでは実測により動作確認済み）。
+- 実Vercelプロキシ経由でのOrigin/`X-Forwarded-Host`検証は本番環境でまだ確認していない。
+- magic bytes検証は画像の完全な安全性検証ではない（フルパーサーではなく、既知の署名との一致確認のみ）。
+- 画像のresize・再エンコード・EXIF除去は実装していない。
+- Songs管理APIの専用rate limitは実装していない（admin限定のためMVPでは棚上げ）。
+- songの物理DELETEは実装していない（6.10・12章参照）。
+- `/music`・`/music/[id]`・`/admin/music`のUI（画面）は未実装。
 
 ---
 
@@ -1266,12 +1334,13 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 
 - 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
 - `events`のクライアントからの物理DELETEを将来も禁止するか。
-- Storageのobject lifecycle（アップロード・差し替え・削除・孤児objectの掃除）。
-- Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認（eventsの`update_event`・`set_event_status`とsongsの`update_song`・`set_song_status`に共通）。
+- Storageのobject lifecycle: `song-images`についてはアップロード・差し替え・削除・未参照objectの手動cleanupまでST1〜ST5で解消済み（9章「song-images: 実装済みStorage契約」参照）。他4バケット（`avatars`・`post-images`・`event-images`・`news-images`）のStorage RLS・object lifecycleは未実装のまま残る。`song-images`についても、自動/定期cleanup（cron・Vercel Cron等）を将来実装するか、手動実行のみで運用するかは未決定。
+- Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認: songsの`update_song`は`PATCH /api/admin/music/[id]`（ST4）で実HTTPリクエストにより確認済み（9章「song-images: 実装済みStorage契約」参照）。eventsの`update_event`・`set_event_status`、songsの`set_song_status`のintegrationは未実装・未確認のまま残る。
 - `songs`の物理DELETEを行うか（現在はDELETEのRPCがなく、不要な楽曲は`draft`へ戻せる。postgres・service_roleによる直接のDELETE自体を禁止するconstraintは現在ない）。
 
 （`posts.event_id`が公開可能なeventだけを参照できるようにする方法はM18で解消済み〔6.2参照〕。なお、`events`のSELECT policyを追加・変更する場合は`posts.event_id`の参照可能範囲への影響を必ず再評価するというセキュリティ維持要件が、6.5に定められている。）
 （`songs`の公開状態・公開の読み取り・adminの管理のRPCはS1〜S7で実装済み〔6.10参照〕。`songs`の公開状態（`status`）の意味を変更する場合は、公開の読み取りRPC（`get_public_songs`・`get_public_song`）を必ず再評価するというセキュリティ維持要件が、6.10に定められている。）
+（`song-images`のbucket・Storage RLS・アップロード/差し替え/削除のオーケストレーション・手動cleanupはST1〜ST5で実装・検証済み〔9章「song-images: 実装済みStorage契約」参照〕。残る論点は自動/定期cleanupの是非のみ。）
 （`event_participants`の参加者一覧のanonへの公開範囲・writeの方式・privacy defaultなどはM19〜M21で解消済み〔6.6参照〕。なお、events・profiles・blocksの公開範囲や参加表明のvisibilityの意味を変更する場合は、`get_event_participants`（M21）とM20への影響を必ず再評価するというセキュリティ維持要件が、6.6に定められている。）
 
 ---
@@ -1309,3 +1378,4 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 | v1.26 | 2026-09-28 | `posts.event_id`の参照境界（M18）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。4章・6.2・6.5・8章・12章: `live_report`のMVP上の意味を「LIVE参加後の感想」から「特定のLIVEに紐づくファン投稿」（参加予定・事前の投稿・当日の投稿・感想・LIVEレポート・思い出投稿等を含む。DB値`live_report`は維持し、UI名称は将来「LIVE投稿」等にできる。post_typeの変更は確定していない）へ明確化。DB invariant `posts_post_type_event_id_check`: `normal`は`event_id IS NULL`、`live_report`は`event_id IS NOT NULL`（旧`posts_live_report_requires_event_id_check`を置換）。`posts_insert_own`は従来の条件（active本人・`author_id = auth.uid()`・`status='published'`）を維持し、`event_id IS NULL OR EXISTS (SELECT 1 FROM public.events e WHERE e.id = posts.event_id)`を追加。EXISTSにはeventsのRLS `events_select_public`が適用されるため、参照できるeventはM11の公開範囲（publicと、一度公開された後のcancelled）と一致し、M11がsingle source of truthとなる（postsは`first_published_at`を直接参照せず、helper・trigger・RPCの追加もない）。draft・未公開cancelled・不存在は参照不可。`event_date`は参照可否に使わない（未来・過去のpublic LIVEとも可）。一度公開されたLIVEは中止後も既存のevent relationを保持し、新規投稿も可能で、eventのstatus変更でpostは変更されない。参加登録（`event_participants`）・block・profile属性は参照可否に影響せず、同一ユーザーが同一eventへ複数のLIVE投稿を作成できる。existence oracleなし（draft・未公開cancelled・不存在は同一のRLS拒否〔現在の実装ではSQLSTATE 42501〕で区別できず、FK違反に到達しない。恒久的なAPI error contractではない）。service_role/postgresはRLSをbypassする既知のtrust boundary（clientからevent_idを書けるwrite pathはINSERTのみで、UPDATEでは`event_id`・`post_type`を変更できない）。`posts_event_id_idx`を追加（関連投稿の取得API・UIは未実装）。セキュリティ維持要件: eventsのSELECT policyの追加・変更時は`posts.event_id`の参照可能範囲への影響を再評価する。解消した既知の課題（`posts.event_id`がdraft等を参照できる問題）を6.5・12章から除去。残る未決定事項（公開/liveの並び順/pagination・物理DELETE・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsの最終RLS/write方式・news・songs・Storage RLS）と、関連投稿UI・LIVE投稿作成UI・Next.js/PostgREST integrationが未実装である点は変更なし |
 | v1.27 | 2026-09-28 | `event_participants`の契約（M19・M20・M21）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.6・4章・8章・12章: 「base tableの読み取り（本人・active admin。RLS＋6列の列単位SELECT権限。M19）／本人のwrite（SECURITY DEFINER RPC `set_my_event_participation`。M20）／fan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`。M21）」の3層。authenticatedへのbase tableの直接writeは不可で、fan-facingな一般のSELECT policyもない。status（going/attended/cancelled。`events.status=cancelled`とは別概念）・visibility（public/private/attended。**defaultをpublicからprivateへ訂正**）の意味を明記。本人のreadはaccount statusに関係なく可（bannedを含む。UIの`/restricted`誘導とは別レイヤー）。M20: active本人のみ・desired-state API（NULLは「変更しない」ではない・同一状態はno-op）・新規行はpublic eventのみ（draft/cancelled/不存在は区別されない同一エラー）・goingはevent_date非依存・attendedは`event_date <= now()`で過去のpublic eventには直接登録可・新規cancelled行は不可・public eventの既存行は全遷移を許可（attendedは終端でない）・cancelled/draftのeventの既存行はno-op・visibilityのみの変更・cancelledへの変更のみ許可し肯定する方向への変更は拒否・physical DELETEなし・event FOR SHARE/participant FOR UPDATE（lock順events→participants）とINSERT ON CONFLICT DO NOTHING・M17のFOR UPDATEとの直列化・楽観的同時実行制御なし・エラー6種。M21: anon不可・active/suspendedの閲覧者のみ（banned/profileなし/uid NULLは0行）・`events.status=public`のみ（cancelledは公開履歴に関係なく0行。M11の公開範囲より狭い）・going/public・attended/public・attended/attendedのみ表示・participantのprofile active/suspendedのみ・双方向block・adminもbypassなし・返却6列（visibility・created_at・件数を返さない）・status_filter・keyset pagination（username,id）・page_size clamp 1〜100・cursor対象の存在は検証しない・不正UUIDは22P02の場合あり・検索/件数/詳細RPCなし・エラー2種。SECURITY DEFINER RPCのため、events/profiles/blocks/visibilityの変更時は`get_event_participants`の再評価が必要（維持要件）。M18（LIVE投稿は参加表明に依存しない）は不変。未実装: 件数（将来は同一のprivacy条件を使うこと）・検索・Realtime・通知・follow/DM・check-in/ticket検証・admin訂正・UI・Next.js/PostgREST integration |
 | v1.28 | 2026-09-28 | `songs`の契約（S1〜S7）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.10・4章・6.11・8章・9章・12章: songsのbase table（RLS有効・policy 0件・anon/authenticatedの権限なし。adminも直接のSELECT・INSERT・UPDATE・DELETE不可）とSECURITY DEFINERのRPCによる読み書きの構成を記載。公開状態`status`（`draft`/`public`。デフォルト`draft`。`songs_status_check`。`draft ⇄ public`の両方向・同一statusはno-op・公開の条件として`release_date`/cover/descriptionの存在を要求しない・`update_song`はstatusを変えない）。公開の読み取り`get_public_songs`（`release_date DESC NULLS LAST, id DESC`のNULL安全なkeyset cursor・`INVALID_SONG_CURSOR`・page_size 1〜100）・`get_public_song`（draft・不存在・NULLは同じ0行）は、anonを含む全員が実行でき、account statusとblockに依存しない。adminの読み取り`get_admin_songs`（title検索・`SONG_SEARCH_TOO_LONG`・status filter・同じcursor）・`get_admin_song`（8列・`updated_at`はversion tokenとして加工せず返す。JSのDate経由のミリ秒への丸めに注意）。adminの書き込み`create_song`（常にdraft）・`update_song`（全置換・`expected_updated_at`の完全一致・`FOR UPDATE`・no-op・`changed_fields`の固定順）・`set_song_status`（`INVALID_SONG_STATUS`・no-op・versionを`update_song`と共有）と、内部helper `internal.normalize_song_content`（title 1〜100文字・description最大5000文字・cover keyは`{uuid}.{ext}`でlowercaseの拡張子のみ〔eventsのhelperとは異なり大文字の拡張子は拒否〕・release_dateはinfinity不可）。`admin_logs`のaction `create_song`/`update_song`/`set_song_status`（target_type `song`・値は記録しない）。Songsのエラーコード12種。Songs関連のapplication RPCは7本・内部helperは1本。未実装: `song-images`のStorage・画像アップロード・画面（`/music`・`/music/[id]`・`/admin/music`）・Next.js/PostgREST integration・物理DELETEのRPC・外部の配信リンク・歌詞の専用機能 |
+| v1.29 | 2026-09-28 | `song-images`のStorage実装（ST1〜ST5）とPROJECT_SPEC.mdを同期（ドキュメントのみ。DB migration・application code・依存関係の変更なし）。3章・5.4・6.10・9章・12章を更新。9章に新設「song-images: 実装済みStorage契約」: bucket設定（`public=true`・5MiB・JPEG/PNG/WebP。ST1）／public bucketのtrade-off（draft songの画像もkey既知の第三者が閲覧可能、既知URL/cacheの失効は保証しない。PM受容済み）／object key契約（root直下`{uuid}.{jpg\|jpeg\|png\|webp}`、UUIDのhexは大文字小文字可、拡張子はlowercaseのみ。DB/Storage契約は`jpeg`も受理するが、現在の唯一のアップロード経路が生成するのは`jpg`のみという契約の違いを明記）／Storage RLS policy 3件（`song_images_admin_select`・`_insert`・`_delete`。UPDATE policyなし。ST2改訂版）と`internal.can_delete_song_image()`／direct SQL DELETEの禁止／admin業務API `POST /api/admin/music`（作成。ST4）・`PATCH /api/admin/music/[id]`（更新。`cover_action`=`keep`\|`replace`\|`remove`の明示指定。ST4）のワークフロー（Origin検証→認証→admin認可→multipart検証→必要ならStorageアップロード→`create_song`/`update_song`（無変更のまま利用）→失敗時は新規アップロード分をbest-effort補償削除、成功時は旧画像をbest-effort削除）／旧ST3原始エンドポイント`POST /api/admin/music/images`が統合済みで現在は存在しないことの明記／画像のmagic bytes検証・server側UUID生成・`service_role`不使用・Origin/same-origin検証（Vercel本番でのX-Forwarded-Host実挙動は未検証）／非atomicなlifecycleとshared-key TOCTOU（`can_delete_song_image()`が実削除時にDB参照状態を再確認）の説明。cleanup API `POST /api/admin/music/images/cleanup`（ST5。手動実行のみ）: candidate定義（valid key形式 AND `created_at <= cleanupStartedAt-24h`。境界は`<=`でeligible）・`can_delete_song_image()`による最終確認・scan-firstとoldest-first pagination（`sortBy created_at asc`の実測動作確認と長期保証への留保）・上限（`MAX_SCAN_OBJECTS=1000`・`MAX_CLEANUP_OBJECTS=100`）・aggregateのみのresponse（`scanned`/`eligible`/`deleted`/`skipped`/`failed`/`scan_limit_reached`）・複数admin同時実行時の安全性とidempotency・新規`admin_logs` actionは追加していないこと・自動/定期cleanup（cron等）は未実装であること。「cleanup candidate」と「orphan」の用語を区別（削除時に未参照が確認されたものだけをorphanと呼ぶ）。既知の懸念一覧（public bucket・非atomicity・手動cleanupのみ・Storage sortの長期保証・Vercel本番未検証・magic bytesは完全な安全性検証ではない・resize/EXIF除去なし・rate limitなし・物理DELETEなし・UI未実装）を明記。3章の機能一覧・5.4の`/admin/music`行・6.10の実装状況・12章の未確定事項（Storage object lifecycle・`expected_updated_at`のintegration確認）を、song-images分のみ解消済みに更新し、他4バケット（`avatars`・`post-images`・`event-images`・`news-images`）は引き続き未実装のままであることを明記（song-images実装を理由に一括で実装済みとは記載しない）。`/music`・`/music/[id]`・`/admin/music`のUI・自動/定期cleanup・songの物理DELETEは引き続き未実装 |
