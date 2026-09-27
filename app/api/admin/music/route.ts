@@ -5,7 +5,7 @@ import { isSameOriginRequest } from "@/lib/http/verify-same-origin";
 import { mapSongDbError } from "@/lib/song-images/errors";
 import { deleteSongImageBestEffort } from "@/lib/song-images/delete";
 import { uploadSongImage } from "@/lib/song-images/upload";
-import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Touches cookies, Supabase and (conditionally) file bytes — Node.js runtime
 // required (Edge is deprecated in this Next.js version).
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
 
   let supabase;
   try {
-    supabase = await createSupabaseRouteHandlerClient();
+    supabase = await createSupabaseServerClient();
   } catch (error) {
     console.error("create song: failed to create Supabase client", error);
     return errorResponse("UPLOAD_FAILED", 500);

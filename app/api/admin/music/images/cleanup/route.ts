@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireActiveAdmin } from "@/lib/admin/authorize";
 import { isSameOriginRequest } from "@/lib/http/verify-same-origin";
 import { runSongImageCleanup, SongImageScanError } from "@/lib/song-images/cleanup";
-import { createSupabaseRouteHandlerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Touches cookies and Supabase — Node.js runtime required (Edge is
 // deprecated in this Next.js version).
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   let supabase;
   try {
-    supabase = await createSupabaseRouteHandlerClient();
+    supabase = await createSupabaseServerClient();
   } catch (error) {
     console.error("song image cleanup: failed to create Supabase client", error);
     return errorResponse("CLEANUP_FAILED", 500);
