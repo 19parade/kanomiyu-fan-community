@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.25
+- ステータス: Draft v1.26
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -62,7 +62,7 @@
 | 8 | LIVE一覧 | LIVE（ライブ）情報の一覧表示。 |
 | 9 | LIVE詳細 | 個別LIVEの詳細情報表示。 |
 | 10 | LIVE参加表明 | 会員がLIVEへの参加意思を表明できる機能。 |
-| 11 | LIVEレポート | LIVE参加後の感想・レポート投稿（投稿機能の一種として実装）。 |
+| 11 | LIVEレポート（LIVE投稿） | 特定のLIVEに紐づくファン投稿（参加予定・楽しみといった事前の投稿、LIVE当日の投稿、感想・LIVEレポート、写真付きの思い出、後日の思い出投稿、一度公開された後に中止されたLIVEについての投稿等。これらは別々のpost_typeではない）。投稿機能の一種として実装し、DB上のpost_typeは`live_report`（UI上の表示名称は将来「LIVE投稿」等にできる）。紐付けできるLIVEは、ファンに公開されているLIVE（公開中、または一度公開された後に中止されたLIVE）に限る。詳細は6.2参照。 |
 | 12 | ニュース | 運営（管理者）が発信する公式・非公式ニュース。 |
 | 13 | 通報 | 不適切な投稿・コメント・ユーザーの通報機能。 |
 | 14 | ブロック | 他ユーザーをブロックする機能。 |
@@ -284,25 +284,38 @@ Next.js App Router構成を前提とする。
 
 ### 6.2 posts
 
-**目的**: ファン同士の投稿、およびLIVEレポートを保持する。
+**目的**: ファン同士の投稿、および特定のLIVEに紐づくファン投稿（`post_type='live_report'`。LIVEレポート・感想・参加予定・思い出投稿等）を保持する。
 
 | カラム | 型 | 説明 |
 |---|---|---|
 | id | uuid (PK) | |
 | author_id | uuid (FK → profiles.id) | 投稿者 |
-| post_type | text | `normal` \| `live_report`（デフォルト `normal`） |
-| event_id | uuid (FK → events.id, nullable) | `live_report` の場合、対象LIVE |
+| post_type | text | `normal` \| `live_report`（デフォルト `normal`）。`live_report`は、MVPでは「特定のLIVEに紐づくファン投稿」のDB上のpost typeであり、開催後のレポートに限定しない（下記「LIVE投稿とeventの参照境界」参照） |
+| event_id | uuid (FK → events.id, nullable) | `live_report`の場合は対象LIVE（必須）、`normal`の場合は必ずNULL。参照できるのはファンに公開されているeventのみ（下記参照） |
 | content | text | 本文 |
 | image_url | text (nullable) | Storage `post-images` バケット内のobject key（完全URLではない。9章参照） |
 | status | text | `published` \| `hidden` \| `deleted`（デフォルト `published`。論理削除を基本とし、物理削除は行わない） |
 | created_at | timestamptz | |
 | updated_at | timestamptz | |
 
-**リレーション**: `author_id → profiles.id`、`event_id → events.id`（任意。ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）。`comments.post_id`, `likes.post_id` から参照される。
+**リレーション**: `author_id → profiles.id`、`event_id → events.id`（`normal`ではNULL、`live_report`では必須。ON DELETE RESTRICT。6章冒頭「その他のFKのON DELETE方針（確定）」参照）。FK自体は参照先のeventの公開状態を検査しない（FKの整合性検査はRLSを通らない）ため、参照可能なeventの制限は下記のINSERT policyが担う。`comments.post_id`, `likes.post_id` から参照される。
 
 **ユニーク制約**: なし。
 
 **備考**: LIVEレポートを独立テーブルにせず `posts` の一種として実装することで、コメント・いいね・通報の仕組みをそのまま流用できる。
+
+**LIVE投稿とeventの参照境界（確定・実装済み。M18）**:
+- *`live_report`の意味*: MVPでは、`post_type='live_report'`を「特定のLIVEに紐づくファン投稿」のDB上のpost typeとして扱う。従来の「LIVE参加後の感想・レポート」に限定せず、参加予定・楽しみといった事前の投稿、LIVE当日の投稿、感想・LIVEレポート、写真付きの思い出、後日の思い出投稿、一度公開された後に中止されたLIVEについての投稿等を含められる（これらは例示であり別々のpost typeではなく、DB上はいずれも`live_report`）。`live_report`というDB値はM18では変更しておらず、UI上の表示名称は将来「LIVE投稿」等にできる（post_typeの名称変更・追加は確定していない）。
+- *post_type × event_idのDB invariant*: DB CHECK制約`posts_post_type_event_id_check`が、`post_type='normal'`なら`event_id IS NULL`、`post_type='live_report'`なら`event_id IS NOT NULL`を強制する（定義: `CHECK ((post_type = 'normal' AND event_id IS NULL) OR (post_type = 'live_report' AND event_id IS NOT NULL))`）。したがって`normal`+event、`live_report`+NULLは拒否される。この制約はeventの公開状態を検査しない（それはINSERTのRLSの責務）。post_typeの値の範囲は従来どおり`posts_post_type_check`が強制する。旧制約`posts_live_report_requires_event_id_check`はM18で上記に置換された。
+- *参照できるevent*: `live_report`が参照できるeventは、M11のfan-facingな公開範囲と一致する。すなわち`events.status='public'`、または`events.status='cancelled'`かつ`first_published_at IS NOT NULL`（一度公開された後に中止されたLIVE）。draftと、一度も公開されていない`cancelled`は参照できない。`event_date`は参照可否に一切使わない（未来のpublic LIVEにも過去のpublic LIVEにもLIVE投稿を作成できる。「開催後のみ」というDB制約はない）。M17のlifecycleとの関係では、`cancelled`（未公開）→`draft`→`public`とした場合、publicになった時点から投稿できる。一度公開されたeventはdraftに戻せず（trigger・M17）削除もできない（FKはRESTRICT）ため、参照可能になったeventは以後も参照可能なままである。
+- *中止後の扱い*: 一度公開されたLIVEについては、開催後や中止後もレポート・思い出投稿との紐付けを許すため、`public → cancelled`となった後も、既存のLIVE投稿の`event_id`は保持され、新しいLIVE投稿も作成できる。eventのstatus変更を理由に、既存のpostを自動的に`hidden`/`deleted`にすることはなく、postの行は変更されない（`updated_at`を含む。実時間の検証で確認済み）。
+- *実装（INSERT policy）*: `posts_insert_own`のWITH CHECKは、従来の条件（`author_id = auth.uid()`・`is_active_user()`・`status = 'published'`）をそのまま維持し、`event_id IS NULL OR EXISTS (SELECT 1 FROM public.events e WHERE e.id = posts.event_id)`を追加する。postsのpolicyはevent可視性の述語を複製せず、`events.id`のみを参照し、`first_published_at`は直接参照しない。EXISTS内の`events`には呼び出し元のRLS（`events_select_public`）が適用されるため、M11が「postから参照可能なevent」のsingle source of truthになる。authenticated・anonは`first_published_at`をSELECTできず（M12のprivate column）、eventの公開履歴の判定は`events_select_public`の内部で行われる。M18はhelper・trigger・RPCを追加していない（postsのINSERTはbase tableへの直接INSERTのまま）。
+- *セキュリティ不変条件（security review requirement）*: M18は「eventsのfan-facingなSELECT可視性 = postsから参照可能なevent」という関係に依存している。したがって、`events`に新しいSELECT policyを追加する、または`events_select_public`を変更する場合は、`posts.event_id`の参照可能範囲まで変化しないか（policyの追加によってEXISTSから見えるeventが広がらないか）を必ず再評価する。
+- *existence oracle*: `live_report`のINSERTにおいて、draftのUUID・一度も公開されていない`cancelled`のUUID・不存在のUUIDは、fan-facingなwrite pathから区別できない。現在の実装・検証結果では、いずれも同一のエラー（SQLSTATE 42501、`new row violates row-level security policy for table "posts"`）になり、不存在のeventでもFK違反（23503）には到達しない（WITH CHECKがFK検査より先に評価されるため）。なお`normal`+eventは、可視なeventなら`posts_post_type_event_id_check`違反（23514）、そうでなければ上記の42501になる。これらのSQLSTATEはアプリの恒久的なAPI error contractとして確定したものではない。
+- *trust boundary*: M18のevent参照の強制は、authenticatedのINSERT RLSのboundaryである。service_roleとpostgresはRLSをbypassするため、trustedなserver・migrationからはdraft等を参照するpostを直接作成できる（既知のtrust boundaryであり、未修正のバグではない）。MVPでは、クライアントが`event_id`を書けるwrite pathがINSERTのみであり、クライアントのUPDATEでは`event_id`・`post_type`を変更できないため、この設計としている。trusted serverからのwriteを増やす場合は再評価が必要である。
+- *UPDATE / 作成後*: authenticatedのUPDATEは従来どおり`content`・`image_url`のみ（列単位のACL。M18でUPDATE policy・ACLは変更していない）で、作成後にクライアントが`event_id`・`post_type`・`author_id`・`status`を変更することはできない。postが`moderate_post()`で`hidden`、`delete_own_post()`で`deleted`になっても`event_id`は保持される（投稿の履歴としてevent relationを保持する）。
+- *その他の独立性*: 同じユーザーが同じeventに複数の`live_report`を作成できる（UNIQUE制約なし。1 LIVEにつき1ユーザー1投稿の制限はない）。LIVE投稿の作成に`event_participants`の参加登録は不要である（`event_participants`はM18で変更しておらず、別の未解決のresourceである）。block関係はevent参照の可否に影響しない（blockは従来どおりpostsのSELECT visibilityに作用する。「投稿できるか」と「誰がその投稿を閲覧できるか」は別のboundary）。profileの属性（`fan_since`等）も参照可否に使わない。
+- *index*: `posts_event_id_idx`（`CREATE INDEX posts_event_id_idx ON public.posts USING btree (event_id)`）をM18で追加した。将来の`/live/[id]`から関連するLIVE投稿を取得するための基礎indexであり、関連投稿の取得API・UIはまだ未実装である。
 
 **status / 表示制御の方針**（コメント6.3にも同様に適用）:
 - `status` による削除・非表示は論理削除を基本とし、レコード自体はDB上に保持する。
@@ -319,7 +332,7 @@ Next.js App Router構成を前提とする。
 
 **DB制約（確定）**:
 - `post_type`・`status`にはDB CHECK制約を設け、値の範囲をそれぞれ`normal`/`live_report`、`published`/`hidden`/`deleted`に強制する。
-- `post_type='live_report'`の場合は`event_id`を必須とするDB制約（CHECK等）を設ける。
+- post_typeとevent_idの組み合わせには、DB CHECK制約`posts_post_type_event_id_check`（実装済み。M18）を設け、`normal`は`event_id IS NULL`、`live_report`は`event_id IS NOT NULL`を強制する（旧`posts_live_report_requires_event_id_check`は置換済み）。参照できるeventの範囲はINSERTのRLSで制限する（上記「LIVE投稿とeventの参照境界」参照）。
 
 **`hidden` と `deleted` の使い分け（確定）**:
 
@@ -545,17 +558,18 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 **未実装・既知の課題**:
 - 物理DELETE: adminの削除RPCは存在せず、クライアントからの直接のDELETEもできない（不要なdraftは`draft → cancelled`で退避できる）。将来も物理DELETEを禁止するかは未決定（下記）。
-- 既知のfuture issue: `posts`の`live_report`作成時に、`event_id`が公開可能なeventかを検証していない（`posts`のINSERT policyは`event_id`の状態を検査しない）。今後の対応対象であり、現時点では変更していない。
+- （解消済み。M18）`posts`の`live_report`作成時の`event_id`の検証: `posts_insert_own`が、M11の公開範囲（`events_select_public`）で見えるevent（public、または一度公開された後に`cancelled`）だけを参照できるようにした。draft・一度も公開されていない`cancelled`・不存在のeventは参照できない（6.2「LIVE投稿とeventの参照境界」参照）。M11〜M17の契約はM18で変更していない。
 - Storageの`event-images`バケットは未作成で、Storage RLSも未実装（9章参照）。
 
 **未決定事項（PM判断待ち。確定仕様ではない）**:
 - 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、同一`event_date`のeventを決定的に並べるtie-breakの列、cursor方式かoffset方式か。実DBのテストで、同一`event_date`のeventの並びが一意でないと結果が不定になることを確認済みであり、本番では決定的な並び順が必要）。`/admin/events`のadmin一覧の並び順・paginationは`get_admin_events`で確定済みであり、公開の`/live`とは別の契約である。
 - クライアントからの物理DELETEを将来も禁止するか（現在はadminの削除RPCがなく、直接のDELETEもできないという事実のみが確定している）。
-- `posts`の`live_report`作成時に、`event_id`が公開可能なeventだけを参照できるようにする方法。現在の`posts`のINSERTの契約では、UUIDを知っていれば、draftや一度も公開されていない`cancelled`のeventを参照する`live_report`を作成できる可能性がある（既知の未解決の課題）。
 - Storageのobject lifecycle（アップロード・差し替え・削除・孤児objectの掃除）。DBは`image_url`のobject keyの形式のみを検証しており、objectの実在確認・Storage RLS・bucketは未実装。
 - Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認（取得した`updated_at`文字列を加工せずに返す方針の検証）。
 
-（解消済み: 公開済み`cancelled`は公開を継続する〔M11で確定〕。公開する列は上記8列で、`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない〔M12で確定〕。adminの読み取り境界は、SECURITY DEFINER RPC `get_admin_events`（一覧）・`get_admin_event`（詳細）として、方式・signature・返却列・並び順・pagination・search/status filter・認可の契約を含めて確定・実装済み〔M13・M14〕。adminの書き込みは、SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`として、RPCの分割・入力・validationの上限・status遷移の規則・楽観的同時実行制御（`expected_updated_at`の完全一致）・`admin_logs`へのatomicな記録・エラーコードを含めて確定・実装済み〔M15・M16・M17〕。）
+**セキュリティ維持要件（M18）**: `posts.event_id`から参照できるeventは、`events_select_public`（M11）のfan-facingな可視範囲と一致している（`posts_insert_own`のEXISTSがeventsのRLSを再利用する。6.2参照）。`events`に新しいSELECT policyを追加する、または`events_select_public`を変更する場合は、`posts.event_id`の参照可能範囲が意図せず広がらないかを必ず再評価する（これは未決定事項ではなく、変更時に守る維持要件である）。
+
+（解消済み: `posts`の`live_report`作成時の`event_id`の検証は、`posts_insert_own`のEXISTS（eventsのRLSの再利用）として実装済み〔M18〕。公開済み`cancelled`は公開を継続する〔M11で確定〕。公開する列は上記8列で、`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない〔M12で確定〕。adminの読み取り境界は、SECURITY DEFINER RPC `get_admin_events`（一覧）・`get_admin_event`（詳細）として、方式・signature・返却列・並び順・pagination・search/status filter・認可の契約を含めて確定・実装済み〔M13・M14〕。adminの書き込みは、SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`として、RPCの分割・入力・validationの上限・status遷移の規則・楽観的同時実行制御（`expected_updated_at`の完全一致）・`admin_logs`へのatomicな記録・エラーコードを含めて確定・実装済み〔M15・M16・M17〕。）
 
 ---
 
@@ -925,7 +939,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 ### セキュリティbaseline（実装済み。M9）
 
 - 対象6テーブル（`events`・`event_participants`・`news`・`songs`・`login_attempts`・`app_settings`）は、RLS無効かつanon/authenticatedにtableの全権限が付与された状態だったため、M9でdeny-by-defaultにした。M9直後の状態は、6テーブルとも RLS有効（FORCEなし）・policy 0件・anonとauthenticatedのtable権限なし・列単位のACLなし。postgres・service_roleの既存ACLは変更していない。
-- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。したがって現在は、`event_participants`・`news`・`songs`・`app_settings`の4テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
+- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。したがって現在は、`event_participants`・`news`・`songs`・`app_settings`の4テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
 - default privilege: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`により、postgresが今後`public`スキーマに作成するtableへのanon/authenticatedの自動的なtable権限付与を除去した。service_roleのdefault privilege、sequence・function・typeのdefault privilege、schema権限は変更していない。今後もschemaの変更はmigration経由で行う方針を維持する。`supabase_admin`が作成するtableのdefault privilegeは変更していない。
 - 公開読み取り（news・songs）や本人のwrite（event_participants）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
 
@@ -938,7 +952,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 | テーブル | 参照(SELECT) | 作成(INSERT) | 更新/削除(UPDATE/DELETE) |
 |---|---|---|---|
 | profiles | 本人は自分自身の行のみSELECT可、adminは管理上必要な行をSELECT可。一般ユーザーによる他ユーザーの`profiles`本体への直接SELECTは禁止し、公開情報の取得は`get_public_profiles()`/`get_public_profile()`（SECURITY DEFINER RPC。6.1.4参照）経由に限定する | 本人（サインアップ時） | 本人（保護対象カラムを除く。6.1.3参照） or admin(`is_admin()`)（role/status等の保護対象カラムの変更は専用RPC経由。6.1.3参照） |
-| posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`/`image_url`のみ）は投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_post()`（logical delete、terminal）または管理者の`moderate_post()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
+| posts | `status='published'`は全員（ただしログイン中は自分がブロックした投稿者の投稿を除く）、`hidden`/`deleted`は投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ、`author_id = auth.uid()`、`status='published'`）。加えて（実装済み。M18）`normal`は`event_id`がNULL、`live_report`は`event_id`が必須で、参照できるeventはM11でfan-facingに見えるevent（public、または一度公開された後に`cancelled`。`events_select_public`のRLSをEXISTSで再利用。`event_date`・block・`event_participants`には依存しない）のみ（6.2参照） | 通常編集（`content`/`image_url`のみ。`event_id`・`post_type`は作成後に変更不可）は投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_post()`（logical delete、terminal）または管理者の`moderate_post()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | comments | `status='published'`かつ親投稿が公開範囲内なら全員（ただしログイン中は自分がブロックした投稿者のコメントを除く）、それ以外はコメント投稿者本人 or admin(`is_admin()`)のみ | ログイン済み本人（`status='active'`のユーザーのみ） | 通常編集（`content`のみ）はコメント投稿者本人・`status='published'`の場合に限る。物理DELETEは不可。`status`の変更は直接UPDATE不可で、本人の`delete_own_comment()`（logical delete、terminal）または管理者の`moderate_comment()`（`published`↔`hidden`のみ、`deleted`の生成・復元は不可）という専用RPC経由に限定する |
 | likes | fan-facingでは親投稿が公開範囲内の場合のみ全員が閲覧可。それとは独立して、いいねをした本人（`user_id=auth.uid()`）は親投稿の`status`/visibilityや自身の`profiles.status`に関わらず自分のlike行のみ常にSELECT可（6.4参照。投稿者本人への他人likes閲覧の特別権限はなし） | ログイン済みactive本人（`status='active'`のユーザーのみ、`user_id=auth.uid()`、親投稿がfan-facingで閲覧可能な`published`の場合のみ） | 本人（自分の分のみ、`user_id=auth.uid()`）が物理DELETE可。親投稿の`status`/visibilityや本人の`profiles.status`に関わらず削除可（unlike）。他人のlikeは本人以外（adminを含め）削除不可。UPDATE不可 |
 | events | 公開の読み取り（実装済み。M11・M12）: `status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`のeventを、anon・authenticatedの全員がSELECTできる（RLS policy `events_select_public`。`event_date`・利用者の状態には依存しない）。取得できる列は公開8列（`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`）のみで、`SELECT *`は不可（列単位のSELECT権限）。`created_by`・`created_at`・`updated_at`・`first_published_at`は公開しない。draft・一度も公開されていない`cancelled`は公開しない。adminの全件（draft・一度も公開されていない`cancelled`を含む）と非公開列の読み取りは、base tableではなく専用のSECURITY DEFINER RPC（一覧`get_admin_events`・詳細`get_admin_event`。active adminのみ。実装済み。M13・M14）で行う（6.5参照） | admin(`is_admin()`) のみ。クライアントからのbase tableへの直接INSERTは不可（admin含む）。作成は専用SECURITY DEFINER RPC `create_event`（active adminのみ・`admin_logs`とatomic。実装済み。M15）のみ | admin(`is_admin()`) のみ。クライアントからのbase tableへの直接UPDATE/DELETEは不可（admin含む）。内容の更新は`update_event`（M16）、status変更は`set_event_status`（M17）というSECURITY DEFINER RPC（いずれもactive adminのみ・`expected_updated_at`の完全一致による楽観的同時実行制御・`admin_logs`とatomic。実装済み）のみ。物理DELETEを行うRPCは存在せず、将来も禁止するかは未決定。`first_published_at`はDB triggerが管理しクライアントから指定できない |
@@ -1118,10 +1132,11 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 
 - 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
 - `events`のクライアントからの物理DELETEを将来も禁止するか。
-- `posts`の`live_report`作成時の、`event_id`が公開可能なeventだけを参照できるようにする方法。
 - Storageのobject lifecycle（アップロード・差し替え・削除・孤児objectの掃除）。
 - Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認。
 - `event_participants`のanonへの公開範囲（`visibility`）。
+
+（`posts.event_id`が公開可能なeventだけを参照できるようにする方法はM18で解消済み〔6.2参照〕。なお、`events`のSELECT policyを追加・変更する場合は`posts.event_id`の参照可能範囲への影響を必ず再評価するというセキュリティ維持要件が、6.5に定められている。）
 - `event_participants`のwriteをbase tableのRLSで行うか専用RPCで行うか。
 
 ---
@@ -1156,3 +1171,4 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 | v1.23 | 2026-09-27 | eventsの公開境界（M11・M12）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・8章: M11の公開の行境界（RLS policy `events_select_public`。`status='public'`、または`status='cancelled'`かつ`first_published_at IS NOT NULL`。一度公開されたLIVEは中止後も公開を継続し、公開前にcancelledになったeventは公開しない。`event_date`と利用者の状態は公開条件に使わない）／M12の公開の列境界（anon・authenticatedはtable単位のSELECTを持たず、公開8列〔`id`・`title`・`venue`・`event_date`・`description`・`image_url`・`ticket_url`・`status`〕のみ列単位のSELECT。非公開4列〔`created_by`・`created_at`・`updated_at`・`first_published_at`〕。`created_by`はadminの識別を避けるため非公開、`first_published_at`はRLS内部でのみ使用）／`SELECT *`は不可でclientは公開8列を明示、将来の列は明示的なGRANTまでは公開されないopt-in／PostgRESTを含む統合テストはNext.js実装時。adminのbase table read（RLS policy）という従来の推奨案を、列権限がロール単位であることから撤回し、admin read boundaryは専用のtrustedな読み取り境界として別途設計（未実装）。adminの書き込みは専用RPCの方向を維持（未実装）。6.1.4: 公開プロフィールの取得を実装どおり`get_public_profiles()`/`get_public_profile()`のSECURITY DEFINER RPCに修正し、`public_profiles` VIEWは存在しないことを明記（8章のprofiles行も同様）。12章の判断事項から、公開済みcancelledの扱いと公開列を解消し、残りは管理RPCの正式なstatus遷移・validation上限値・LIVE一覧の並び順/pagination・物理DELETE・admin read boundaryの方式・`event_participants`のanon公開範囲とwrite方式。event_participants・news・songsの最終RLS/RPC、`posts.event_id`の検証、Storage RLSは引き続き未実装 |
 | v1.24 | 2026-09-27 | eventsのadmin読み取り境界（M13・M14）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・8章・5.4: adminの読み取りは、公開の「base tableのRLS + 列単位のSELECT権限」とは別に、SECURITY DEFINER RPCで実装（列権限がロール単位のため、adminだけにbase tableの内部列をGRANTする方式は不採用）。認可は`is_admin()`（active adminのみ。一般ユーザー・suspended/banned admin・profile不在・uid NULLは拒否）で、エラーは`EVENT_MANAGEMENT_NOT_AUTHORIZED`（引数検証・対象検索より先）。EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）。M13 `get_admin_events(search, status_filter, after_event_date, after_id, page_size)`: active adminのみ・全status（一度も公開されていないcancelledを含む）・返却7列（`id`・`title`・`venue`・`event_date`・`status`・`first_published_at`・`updated_at`）・`event_date DESC, id DESC`・keyset pagination（片方のみのcursorは`INVALID_EVENT_CURSOR`）・`page_size`を1〜100に丸める（既定20）・`title`/`venue`の部分一致（trim・`%` `_` `\`は通常の文字・最大100文字で`EVENT_SEARCH_TOO_LONG`）・`status_filter`（不正値は`INVALID_EVENT_STATUS_FILTER`）。過去/未来のfilter・総件数・offset・任意のsortは未実装。M14 `get_admin_event(target_event_id)`: eventsの全12列（`created_by`はuuidのみ）・全statusを1件・存在しないUUIDとNULLは0行（専用エラーなし）。読み取りは`admin_logs`に記録しない。base table（公開境界）とadmin RPC（trustedなadmin境界）の区別を明記し、公開の行・列境界（M11・M12）は不変。解消した未決定事項（admin read boundaryの方式・signature・並び順・pagination・search/filter・返却列・認可）を12章・6.5から削除し、残る事項（admin write RPC・許可するstatus遷移・validation上限値・optimistic concurrency・物理DELETE・公開/liveの並び順/pagination・event_participantsのanon公開範囲とwrite方式・`posts.event_id`の検証）を更新。`/admin/events`の画面とSupabase client/PostgREST経由のintegrationは未実装。events admin writeは引き続き未実装 |
 | v1.25 | 2026-09-28 | eventsのadmin書き込み境界（M15・M16・M17）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・6.11・8章・5.4・12章: eventsは「公開の読み取り=base tableのRLS+列単位のSELECT権限（M11・M12）／adminの読み取り=SECURITY DEFINER RPC（M13・M14）／adminの書き込み=SECURITY DEFINER RPC（M15〜M17）」の3層。authenticated/adminへのbase tableの直接write・`admin_logs`の直接writeは不可。3 RPCとも`is_admin()`（active adminのみ・`EVENT_MANAGEMENT_NOT_AUTHORIZED`・認可はvalidationより先）、EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）、owner=postgres・SECURITY DEFINER・VOLATILE・`search_path=`。M15 `create_event(title, venue, event_date, description, image_url, ticket_url) -> uuid`（id・status=draft・created_by=auth.uid()・created_at・updated_at・first_published_atはサーバー管理）と、create/update共通の内部helper `internal.normalize_event_content`（EXECUTEはpostgresのみ）。validation契約: title/venue trim後1〜100文字・description NULL可で最大5000文字（blankはNULL）・event_dateはNOT NULLの有限値（過去・未来可、範囲制限なし、infinity不可）・ticket_urlは小文字https限定の現在の実装をそのまま記載（userinfo・内部空白不可、`HTTPS://`は拒否、raw IDNとIPv6リテラルは受理、RFC完全準拠ではない）・image_urlはevent-images bucketのobject key（`{uuid}.{jpg,jpeg,png,webp}`、大文字小文字を区別せず受理しlowercaseで保存、objectの実在は未確認）。M16 `update_event(target_event_id, expected_updated_at, 内容6項目) -> void`: 全置換（NULLはクリア）・statusは変更しない・no-opは成功だがUPDATE/`updated_at`/audit変更なし・stale versionはno-opより先にEVENT_CONFLICT・不存在/NULLはEVENT_NOT_FOUND。M17 `set_event_status(target_event_id, new_status, expected_updated_at) -> void`: 許可される遷移はdraft→public/cancelled、public→cancelled、cancelled（未公開）→draft、cancelled（公開済み）→publicのみで、同一statusを含むそれ以外はINVALID_EVENT_TRANSITION（未公開cancelledから直接publicは不可）・first_published_atは既存triggerが管理し中止/再公開でも上書きされない。楽観的同時実行制御: `expected_updated_at`必須（NULLはINVALID_EVENT_VERSION）・`SELECT ... FOR UPDATE`のlock下でマイクロ秒まで完全一致・不一致はEVENT_CONFLICT・date_trunc/丸め/許容幅なし。JSの`Date`経由でミリ秒に丸められる可能性があるため取得した`updated_at`文字列を加工せず返す方針（PostgREST/Supabase/Next.js経由のintegrationは未確認のTODO）。audit: 成功したwriteごとに`admin_logs`へ1行をatomicに記録（`create_event`={to_status}、`update_event`={changed_fields（固定順・値は保存しない）}、`set_event_status`={from_status,to_status}）。events管理のエラーコード（read 4種・write 12種）を整理し、trigger内部の例外は通常のAPI契約に含めない。解消した判断事項（events admin writeの方式・RPC分割・validation上限・status遷移・楽観的同時実行制御・audit・エラー）を12章・6.5から削除し、残る項目（公開/liveの並び順/pagination・物理DELETE・posts.event_idの検証・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsのanon公開範囲とwrite方式）を更新。`/admin/events`の画面とNext.jsの統合は引き続き未実装 |
+| v1.26 | 2026-09-28 | `posts.event_id`の参照境界（M18）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。4章・6.2・6.5・8章・12章: `live_report`のMVP上の意味を「LIVE参加後の感想」から「特定のLIVEに紐づくファン投稿」（参加予定・事前の投稿・当日の投稿・感想・LIVEレポート・思い出投稿等を含む。DB値`live_report`は維持し、UI名称は将来「LIVE投稿」等にできる。post_typeの変更は確定していない）へ明確化。DB invariant `posts_post_type_event_id_check`: `normal`は`event_id IS NULL`、`live_report`は`event_id IS NOT NULL`（旧`posts_live_report_requires_event_id_check`を置換）。`posts_insert_own`は従来の条件（active本人・`author_id = auth.uid()`・`status='published'`）を維持し、`event_id IS NULL OR EXISTS (SELECT 1 FROM public.events e WHERE e.id = posts.event_id)`を追加。EXISTSにはeventsのRLS `events_select_public`が適用されるため、参照できるeventはM11の公開範囲（publicと、一度公開された後のcancelled）と一致し、M11がsingle source of truthとなる（postsは`first_published_at`を直接参照せず、helper・trigger・RPCの追加もない）。draft・未公開cancelled・不存在は参照不可。`event_date`は参照可否に使わない（未来・過去のpublic LIVEとも可）。一度公開されたLIVEは中止後も既存のevent relationを保持し、新規投稿も可能で、eventのstatus変更でpostは変更されない。参加登録（`event_participants`）・block・profile属性は参照可否に影響せず、同一ユーザーが同一eventへ複数のLIVE投稿を作成できる。existence oracleなし（draft・未公開cancelled・不存在は同一のRLS拒否〔現在の実装ではSQLSTATE 42501〕で区別できず、FK違反に到達しない。恒久的なAPI error contractではない）。service_role/postgresはRLSをbypassする既知のtrust boundary（clientからevent_idを書けるwrite pathはINSERTのみで、UPDATEでは`event_id`・`post_type`を変更できない）。`posts_event_id_idx`を追加（関連投稿の取得API・UIは未実装）。セキュリティ維持要件: eventsのSELECT policyの追加・変更時は`posts.event_id`の参照可能範囲への影響を再評価する。解消した既知の課題（`posts.event_id`がdraft等を参照できる問題）を6.5・12章から除去。残る未決定事項（公開/liveの並び順/pagination・物理DELETE・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsの最終RLS/write方式・news・songs・Storage RLS）と、関連投稿UI・LIVE投稿作成UI・Next.js/PostgREST integrationが未実装である点は変更なし |
