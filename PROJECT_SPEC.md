@@ -1,7 +1,7 @@
 # かのうみゆファンコミュニティ 開発仕様書
 
 - ドキュメント種別: 開発仕様書（実装者向け）
-- ステータス: Draft v1.27
+- ステータス: Draft v1.28
 - 対象読者: Claude Code（実装担当）、ChatGPT（企画・設計担当）
 
 ---
@@ -70,7 +70,7 @@
 | 16 | 利用規約 | 静的ページ。 |
 | 17 | プライバシーポリシー | 静的ページ。 |
 | 18 | コミュニティガイドライン | 静的ページ（第6章の禁止事項を反映）。 |
-| 19 | 楽曲一覧・楽曲詳細 | かのうみゆの楽曲情報を一覧・詳細表示する機能（`songs`テーブル、`/music`・`/music/[id]`・管理画面`/admin/music`）。 |
+| 19 | 楽曲一覧・楽曲詳細 | かのうみゆの楽曲情報を一覧・詳細表示する機能（`songs`テーブル、`/music`・`/music/[id]`・管理画面`/admin/music`）。公開状態（`draft`/`public`）を持ち、公開の読み取り（誰でも閲覧可）とadminの管理（作成・内容の更新・公開状態の変更）はDBレベルで実装済み。画面・Storage・Next.jsの統合は未実装。詳細は6.10参照。 |
 
 ---
 
@@ -861,25 +861,82 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 
 ### 6.10 songs
 
-**目的**: 楽曲情報の管理（`/music` ページ用）。
+**目的**: 楽曲情報の管理（`/music`・`/music/[id]`・`/admin/music` 用）。公開の読み取り、adminの読み取り・作成・内容更新・公開状態の変更は、DBレベルで実装・検証済み（S1〜S7）。画面（Next.js）・Storage・Supabase client経由のintegrationは未実装（下記「実装状況」参照）。
 
 | カラム | 型 | 説明 |
 |---|---|---|
-| id | uuid (PK) | |
-| title | text | 楽曲名 |
-| release_date | date (nullable) | リリース日 |
+| id | uuid (PK) | デフォルト `gen_random_uuid()` |
+| title | text NOT NULL | 楽曲名 |
+| release_date | date (nullable) | リリース日（timezoneを持たない日付。NULL・過去・今日・未来のいずれも可） |
 | cover_image_url | text (nullable) | Storage `song-images` バケット内のobject key（完全URLではない。9章参照） |
-| description | text (nullable) | 楽曲説明 |
-| created_at | timestamptz | |
-| updated_at | timestamptz | |
+| description | text (nullable) | 楽曲説明（plain textとして保存する） |
+| created_at | timestamptz NOT NULL | デフォルト `now()` |
+| updated_at | timestamptz NOT NULL | デフォルト `now()`。既存trigger `songs_set_updated_at` がUPDATEごとに更新する。管理のwriteのversion token（下記） |
+| status | text NOT NULL | `draft` \| `public`（デフォルト `draft`。公開状態。実装済み。S1） |
 
 **リレーション**: なし（独立マスタ）。
 
-**ユニーク制約**: なし。
+**ユニーク制約**: PK（`id`）のみ。同名の楽曲も作成できる（titleはidentityではない）。
 
-**備考（コミュニティルール反映）**: 歌詞全文の掲載は禁止事項のため、`lyrics` 等の全文格納カラムは設けない。引用する場合も短い抜粋のみを想定し、専用カラムは用意せず `description` 内での短文引用に留める運用とする。
+**DB制約（確定・実装済み）**: `songs_status_check`（`status IN ('draft','public')`）とPKのみ。`title`・`description`・`cover_image_url`・`release_date`の値の検証は、table制約ではなく、adminのwrite RPC（下記）で行う。indexは`songs_pkey`のみ（追加のindexは作成していない）。triggerは`songs_set_updated_at`のみ。
+
+**持たない列（確定）**: `created_by`（下記）・`published_at`・`first_published_at`・`lyrics`等の歌詞の列・アーティスト/アルバム/配信サービスのURL・並び順の列は、現在のDBに存在しない。
+
+**備考（コミュニティルール反映）**: 歌詞全文の掲載は禁止事項のため、`lyrics` 等の全文格納カラムは設けない。引用する場合も短い抜粋のみを想定し、専用カラムは用意せず `description` 内での短文引用に留める運用とする。DBは歌詞かどうかを判定せず、`description`の長さ（最大5000文字）のみを検証する（歌詞全文の禁止は運用・管理画面のガイドラインで扱う）。
 
 **備考（作成者の記録について・確定）**: `events`/`news`とは異なり、`created_by`（作成した管理者）列は持たない（意図的な設計。楽曲マスタの作成・変更操作は`admin_logs`の記録で十分と判断し、追跡用の列は追加しない）。
+
+**公開状態（status）の意味（確定・実装済み。S1・S7）**:
+- `draft`: 公開されない（adminのみ）。新しく作成された楽曲は必ず`draft`。
+- `public`: 公開の読み取りRPC（下記）で誰でも取得できる。
+- 遷移は`draft → public`（公開）と`public → draft`（非公開へ戻す）の両方向（eventsの`first_published_at`のような公開履歴は持たず、一度公開しても`draft`へ戻せる）。同じstatusへの要求はno-op。
+- 公開の条件として`release_date`・`cover_image_url`・`description`の存在を要求しない（titleのみでも公開できる）。`release_date`が未来・NULLでも公開できる。statusとreleaseの日付は独立である。
+- 更新（`update_song`）では`status`を変えない（公開中の楽曲を編集しても自動で`draft`にならない）。
+
+**アーキテクチャ（確定・実装済み）**: songsのbase tableは、RLS有効（FORCEなし）・policy 0件・anon/authenticatedのtable権限・列権限なしで、admin（active admin）を含め、クライアントからのSELECT・INSERT・UPDATE・DELETEを直接は許可しない。読み書きは全て次のSECURITY DEFINER RPC（owner=postgres・`search_path=''`・dynamic SQLなし・row lockは書き込みのみ）で行う。
+
+*公開の読み取りRPC（実装済み。S2・S3）*（Songs関連のapplication RPCは全7本。内部helperは別に1本）:
+- `get_public_songs(after_release_date date DEFAULT NULL, after_id uuid DEFAULT NULL, page_size integer DEFAULT 20) RETURNS TABLE (id, title, release_date, cover_image_url)`（STABLE）。
+- `get_public_song(target_song_id uuid) RETURNS TABLE (id, title, release_date, cover_image_url, description)`（STABLE）。
+- EXECUTEはanon・authenticated・postgresのみ（PUBLIC・service_roleは不可）。account statusには依存せず、anon・active・suspended・banned・profileなし・uid NULLの全てが同じ結果を得る公開コンテンツで、blockの影響も受けない。active adminが呼んでも、公開RPCとして同じ（`draft`は見えない）。公開RPCをadminの全件readの代わりに使わない。
+- 返す行は`status = 'public'`のみ（`release_date`は条件にしない）。`status`・`created_at`・`updated_at`は返さない。
+- 並び順は`release_date DESC NULLS LAST, id DESC`。cursor（keyset）は`after_id`の有無で判定する: `after_id`・`after_release_date`が共にNULLなら先頭ページ、`after_release_date`のみ非NULLは`INVALID_SONG_CURSOR`、両方非NULLは「`release_date < after_release_date`、または`release_date = after_release_date`かつ`id < after_id`、または`release_date IS NULL`」、`after_id`のみ非NULLはNULLの区間のcursor（`release_date IS NULL`かつ`id < after_id`。non-NULLの区間へは戻らない）。cursorが実在する楽曲か・publicかは検証しない（境界として比較するだけ）。`page_size`はNULLなら20、それ以外は1〜100へclampする。件数・検索は提供しない。
+- 詳細は`id = target_song_id`かつ`status = 'public'`の1行のみ。`draft`・不存在・NULLは区別されない同じ0行（独自のnot-foundエラーはない）。不正なUUID文字列は、関数の本体に入る前にPostgreSQLの型変換エラー（22P02）になり得る。
+
+*adminの読み取りRPC（実装済み。S4a・S4b）*: active admin（`public.is_admin()`）のみ。EXECUTEはauthenticated・postgresのみ（PUBLIC・anon・service_roleは不可）。未認可は`SONG_MANAGEMENT_NOT_AUTHORIZED`（0行にはしない。全ての検証・検索より先に判定する）。
+- `get_admin_songs(search text DEFAULT NULL, status_filter text DEFAULT NULL, after_release_date date DEFAULT NULL, after_id uuid DEFAULT NULL, page_size integer DEFAULT 20) RETURNS TABLE (id, title, release_date, status, updated_at)`（STABLE）。`draft`・`public`の両方を`release_date`に関係なく返す。検証の順序は認可 → search → status_filter → cursor → page_size。`search`はtitleのみを対象とし、前後の空白（U+0020・tab・LF・CR・U+3000）をtrimし、空ならfilterなし、正規化後の長さは最大100文字（超過は`SONG_SEARCH_TOO_LONG`）、大文字小文字を区別しない部分一致で、`%`・`_`・`\`はwildcardではなく通常の文字として扱う。`status_filter`はNULL・`draft`・`public`の完全一致のみ（それ以外は`INVALID_SONG_STATUS_FILTER`）。並び順とcursorの契約は公開一覧と同じ（`INVALID_SONG_CURSOR`を含む）。filterは全てAND。
+- `get_admin_song(target_song_id uuid) RETURNS TABLE (id, title, release_date, cover_image_url, description, status, created_at, updated_at)`（STABLE）。`draft`・`public`の両方の1行を返し、不存在・NULLは0行（エラーにしない）。列は明示的に列挙しており（`SELECT *`ではない）、将来の列の追加が自動では返らない。
+- `created_at`・`updated_at`はDBのtimestamptzを加工せずそのまま返す。**`updated_at`は書き込みRPC（`update_song`・`set_song_status`）のversion tokenで、マイクロ秒まで完全一致する必要がある。フロントエンドでJSの`Date`に変換してミリ秒に丸めた値を書き込みRPCへ返すと、`SONG_VERSION_CONFLICT`になる可能性がある。取得した`updated_at`の文字列を加工せずに返すこと**（Next.js / PostgREST経由のintegrationは未確認）。
+
+*adminの書き込みRPC（実装済み。S5〜S7）*: active adminのみ（認可は他の全ての検証より先。未認可は`SONG_MANAGEMENT_NOT_AUTHORIZED`）。EXECUTEはauthenticated・postgresのみ（PUBLIC・anon・service_roleは不可）。owner=postgres・SECURITY DEFINER・VOLATILE。成功した変更ごとに`admin_logs`へ1行を、変更とatomicに記録する（audit失敗時は変更もrollbackされる。no-op・validationエラー・version conflict・not found・未認可では記録しない）。
+- `create_song(title text, release_date date DEFAULT NULL, cover_image_url text DEFAULT NULL, description text DEFAULT NULL) RETURNS uuid`: 常に`status='draft'`で作成する（status引数はない）。`id`・`created_at`・`updated_at`はDBが生成し、戻り値は新しい楽曲のidのみ（作成後は`get_admin_song`で再取得する）。audit: `action='create_song'`、`target_type='song'`、`detail={"to_status":"draft"}`。
+- `update_song(target_song_id uuid, expected_updated_at timestamptz, title text, release_date date DEFAULT NULL, cover_image_url text DEFAULT NULL, description text DEFAULT NULL) RETURNS boolean`: 内容の**全置換**（title・release_date・cover_image_url・description。`status`・`id`・`created_at`は変更しない。`updated_at`は既存triggerが更新し、RPCから直接SETしない）。省略した`release_date`・`cover_image_url`・`description`はNULLになりクリアされるため、UIは編集時に現在値を全て送る必要がある。戻り値は、実変更ありで`true`、有効な要求だが変更なし（no-op）で`false`。検証の順序は認可 → `expected_updated_at`のNULL（`INVALID_SONG_VERSION`）→ 内容の正規化・検証 → 対象行の`SELECT ... FOR UPDATE` → 存在（`SONG_NOT_FOUND`。`target_song_id`がNULLでも同じ）→ version（現在の`updated_at`との完全一致。不一致は`SONG_VERSION_CONFLICT`）→ no-op → UPDATE → audit。versionの比較は丸め・許容幅・`date_trunc`なしのマイクロ秒までの完全一致で、no-opの判定より先に行う（内容が現在と同じでも、versionが古ければconflict）。正規化後の4項目が全て現在値と同じ（NULL同士は同一）ならno-op（UPDATE・`updated_at`の変更・auditなし）。audit: `action='update_song'`、`target_type='song'`、`detail={"changed_fields":[...]}`（実際に変更された項目名のみ。順序は`title`・`release_date`・`cover_image_url`・`description`で固定。値は記録しない）。
+- `set_song_status(target_song_id uuid, expected_updated_at timestamptz, target_status text) RETURNS boolean`: `status`のみを変更する。`target_status`は`draft`・`public`の完全一致のみ（trimも大文字小文字の補正もしない。NULLを含むそれ以外は`INVALID_SONG_STATUS`。公開一覧のfilterの`INVALID_SONG_STATUS_FILTER`とは別）。検証の順序は認可 → `expected_updated_at`のNULL → `target_status` → `SELECT ... FOR UPDATE` → 存在 → version → 同一statusのno-op → UPDATE → audit。同じstatusへの要求はno-op（`false`。UPDATE・`updated_at`の変更・auditなし。versionが古ければno-opでもconflict）。実変更は`true`。audit: `action='set_song_status'`、`target_type='song'`、`detail={"from_status":"draft","to_status":"public"}`またはその逆（内容の値は記録しない）。
+- *versionの共有*: `update_song`と`set_song_status`は同じ`songs.updated_at`をversion tokenとして共有する。そのため、内容を更新した後の古いtokenでstatusを変更する、またはstatusを変更した後の古いtokenで内容を更新する操作は、いずれも`SONG_VERSION_CONFLICT`になる。対象行を`FOR UPDATE`でlockした後の最新の`updated_at`と比較するため、同じversionでの同時の更新は一方のみが成功する（実DBの2 sessionで確認済み）。
+
+*内部helper（実装済み。S5）*: `internal.normalize_song_content(p_title text, p_description text, p_cover_image_url text, p_release_date date) RETURNS TABLE (title, description, cover_image_url, release_date)`。`create_song`と`update_song`が共有する。owner=postgres・SECURITY INVOKER・IMMUTABLE・`search_path=''`で、EXECUTEはpostgresのみ（PUBLIC・anon・authenticated・service_roleは不可。アプリケーションのRPCではない）。担当は正規化と検証のみで、認可・status・audit・DBのlookup・同時実行・Storageの確認は担当しない。検証の順序（複数が不正なら最初のエラー）は title → description → cover_image_url → release_date。
+- *title*: 前後の空白（U+0020・tab・LF・CR・U+3000のみ。他のUnicode空白は対象外）をtrimして保存し、NULL・trim後に空・101文字以上は`INVALID_SONG_TITLE`（1〜100文字）。内部の空白・改行・Unicodeは保持し、Unicodeの正規化（NFC・NFKC）はしない。
+- *description*: NULLまたはtrim後に空ならNULL、trim後5001文字以上は`INVALID_SONG_DESCRIPTION`（最大5000文字）。内部の空白・改行・段落は保持する。HTML風の文字列もplain textとして保存し、DBは解釈も拒否もしない（フロントエンドでは、通常のReactのtext renderingを使い、Songsのdescriptionの表示に`dangerouslySetInnerHTML`を使わない方針。フロントエンドは未実装）。
+- *cover_image_url*: NULLまたはtrim後に空ならNULL。それ以外はStorageの`song-images`バケット内のobject key `{uuid}.{ext}`（uuidは8-4-4-4-12のhex。ファイル固有のUUIDで、songの`id`とは無関係。hexの大文字小文字は受理し、変換しない。extは**lowercaseの`jpg`・`jpeg`・`png`・`webp`のみ**）に完全一致しなければ`INVALID_SONG_COVER_IMAGE_KEY`。大文字の拡張子（`.JPG`等）は受理して変換せず拒否する（Storageのobject keyは大文字小文字を区別し、DBが別のkeyへ黙って変換しないため）。URL・フォルダ付きのpath・`song-images/`の前置・`../`・その他の拡張子・不正なUUID・余分なsuffix・内部の空白も拒否する。objectの実在は確認しない（形式のみ）。**eventsの`image_url`のhelper（大文字の拡張子を受理してlowercase化する）とは意図的に異なる。**eventsのhelperはこの同期では変更していない。
+- *release_date*: NULL可。有限のdateは過去・今日・未来のいずれも有効で、statusと独立。`infinity`・`-infinity`は`INVALID_SONG_RELEASE_DATE`。年の範囲の制限はない。
+
+*エラーコード（Songs。12種）*:
+
+| コード | 使用するRPC |
+|---|---|
+| `SONG_MANAGEMENT_NOT_AUTHORIZED` | `get_admin_songs`・`get_admin_song`・`create_song`・`update_song`・`set_song_status` |
+| `SONG_SEARCH_TOO_LONG` | `get_admin_songs` |
+| `INVALID_SONG_STATUS_FILTER` | `get_admin_songs` |
+| `INVALID_SONG_CURSOR` | `get_public_songs`・`get_admin_songs` |
+| `INVALID_SONG_TITLE`・`INVALID_SONG_DESCRIPTION`・`INVALID_SONG_COVER_IMAGE_KEY`・`INVALID_SONG_RELEASE_DATE` | `create_song`・`update_song`（helper） |
+| `INVALID_SONG_VERSION`・`SONG_NOT_FOUND`・`SONG_VERSION_CONFLICT` | `update_song`・`set_song_status` |
+| `INVALID_SONG_STATUS` | `set_song_status` |
+
+公開のread RPC・`get_admin_song`は、不存在・非公開を0行で返し、エラーにしない。不正なUUID文字列はPostgreSQLの型変換エラー（22P02）になり得る。
+
+*セキュリティ維持要件*: `get_public_songs`・`get_public_song`はSECURITY DEFINER（owner=postgres）でbase tableのRLSをbypassするため、公開の述語（`status = 'public'`）を関数内に明示している。`status`の意味を変更する場合は、公開の2本のRPCを必ず再評価する。
+
+**実装状況**: 実装済み（DBレベル）: schema・公開状態（S1）・公開の一覧と詳細（S2・S3）・adminの一覧と詳細（S4a・S4b）・作成（S5）・内容の更新（S6）・公開状態の変更（S7）・`admin_logs`への記録・楽観的同時実行制御。未実装: `song-images`バケットとStorage policy・adminの画像アップロードの流れ・画像のobjectの実在の確認・画像URLの解決・`/music`・`/music/[id]`・`/admin/music`の画面・Next.js / Supabase client経由のRPCのintegration・物理DELETEのRPC（不要な楽曲は`draft`へ戻せるが、postgres・service_roleによる直接のDELETE自体を禁止するconstraintやtriggerは現在ない。削除の方針は未決定）・外部の配信サービスのリンク・アルバム/アーティストのDB・歌詞の専用機能。
 
 ---
 
@@ -891,8 +948,8 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 |---|---|---|
 | id | uuid (PK) | |
 | admin_id | uuid (FK → profiles.id) | 操作した管理者 |
-| action | text | 操作種別（実装済み: `moderate_post`, `moderate_comment`, `process_report`, `create_event`, `update_event`, `set_event_status`。将来の専用RPCの例として`ban_user`等。`ban_user`は現時点で存在しない） |
-| target_type | text | 操作対象の種別（例: `post`, `comment`, `report`, `event`, `user`。`report`は`process_report`が、`event`は`create_event`・`update_event`・`set_event_status`が記録する） |
+| action | text | 操作種別（実装済み: `moderate_post`, `moderate_comment`, `process_report`, `create_event`, `update_event`, `set_event_status`, `create_song`, `update_song`, `set_song_status`。将来の専用RPCの例として`ban_user`等。`ban_user`は現時点で存在しない） |
+| target_type | text | 操作対象の種別（例: `post`, `comment`, `report`, `event`, `song`, `user`。`report`は`process_report`が、`event`は`create_event`・`update_event`・`set_event_status`が、`song`は`create_song`・`update_song`・`set_song_status`が記録する） |
 | target_id | uuid | 操作対象のID |
 | detail | jsonb (nullable) | 操作の詳細（変更前後の値など） |
 | created_at | timestamptz | |
@@ -905,6 +962,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 - `admin_logs`へのINSERTをクライアントから直接許可するRLSポリシーは作成しない。active admin自身であっても、`admin_logs`への直接INSERT/UPDATE/DELETEは許可しない（追記のみ・改ざん不可の監査ログとする。UPDATE/DELETEのpolicy自体を作成しない）。
 - 投稿・コメントのモデレーションに伴う`admin_logs`への記録は、`moderate_post()`/`moderate_comment()`という、それぞれ`owner=postgres`のSECURITY DEFINER RPC内部でのみ行う（6.2/6.3参照）。これらのRPCは、呼び出し元が`is_admin()`（`role='admin'`かつ`status='active'`）であることを確認したうえで、対象の`posts.status`/`comments.status`変更と`admin_logs`へのINSERTを同一トランザクション内でatomicに実行する。ログ記録が失敗した場合はstatus変更もロールバックされ、status変更が失敗した場合はログも残らない（片方だけが成立する状態を作らない）。
 - eventsの管理者のwrite（`create_event()`・`update_event()`・`set_event_status()`。実装済み）も、それぞれSECURITY DEFINER RPC（owner=postgres）の内部で、eventの変更とatomicに`admin_logs`へ記録する（`action`は`create_event`・`update_event`・`set_event_status`、`target_type='event'`、`target_id`=event id。`detail`は`{"to_status":"draft"}`・`{"changed_fields":[...]}`・`{"from_status":"...","to_status":"..."}`で、内容の値は記録しない。6.5参照）。events のread RPC（`get_admin_events`・`get_admin_event`）は`admin_logs`に記録しない。
+- songsの管理者のwrite（`create_song()`・`update_song()`・`set_song_status()`。実装済み）も、それぞれSECURITY DEFINER RPC（owner=postgres）の内部で、songの変更とatomicに`admin_logs`へ記録する（`action`は`create_song`・`update_song`・`set_song_status`、`target_type='song'`、`target_id`=song id。`detail`は`{"to_status":"draft"}`・`{"changed_fields":[...]}`・`{"from_status":"...","to_status":"..."}`で、内容の値は記録しない。6.10参照）。songsのread RPC（`get_public_songs`・`get_public_song`・`get_admin_songs`・`get_admin_song`）は`admin_logs`に記録しない。
 - 通報（`reports`）の処理に伴う`admin_logs`への記録も同様に、SECURITY DEFINER RPC `process_report()`（owner=postgres）内部で、`reports`の`status`/`handled_by`/`handled_at`の変更とatomicに行う（実装済み）。`process_report()`は成功した遷移ごとにちょうど1行を、`action='process_report'`、`target_type='report'`、`target_id=reports.id`、`detail={from_status, to_status[, note]}`（`note`は任意で、NULLならkeyごと省略）として記録する。reporter情報・`reports.reason`/`detail`・通報対象の本文等は記録しない（6.7参照）。
 - 将来実装するServer Action / Route Handler等のアプリケーション層は、`admin_logs`へ直接INSERTしない。これらはモデレーション要求を受け付け、`moderate_post()`/`moderate_comment()`を呼び出す経路としてのみ機能する（最終的なauthorizationとatomicityの強制はDB側RPCが担い、アプリケーション層はこれを代替しない）。
 - `detail`には`from_status`・`to_status`・任意の`reason`（前後空白をtrimし、空文字/空白のみはNULLとして省略、最大500文字）等、必要最小限の情報のみを記録する。投稿・コメントの本文全文、`email`、IPアドレス、認証token、secret、passwordその他不要な個人情報は記録しない。
@@ -1014,13 +1072,13 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 ### セキュリティbaseline（実装済み。M9）
 
 - 対象6テーブル（`events`・`event_participants`・`news`・`songs`・`login_attempts`・`app_settings`）は、RLS無効かつanon/authenticatedにtableの全権限が付与された状態だったため、M9でdeny-by-defaultにした。M9直後の状態は、6テーブルとも RLS有効（FORCEなし）・policy 0件・anonとauthenticatedのtable権限なし・列単位のACLなし。postgres・service_roleの既存ACLは変更していない。
-- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。さらに、M19で`event_participants`のprivacy baseline（`visibility`のdefaultを`private`へ変更、本人とactive adminのSELECT境界）を、M20で本人のwrite境界（SECURITY DEFINER RPC `set_my_event_participation`）を、M21でfan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`）を追加した（6.6参照。authenticatedへのbase tableの直接writeは許可していない）。したがって現在は、`news`・`songs`・`app_settings`の3テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
+- 続いて、M10で`login_attempts`のactive adminのSELECT境界（6.12参照）を、M11・M12で`events`の公開の読み取り境界（行はRLS policy `events_select_public`、列は公開8列のみの列単位のSELECT権限。6.5参照）を、M13・M14で`events`のadmin読み取り境界（SECURITY DEFINER RPC `get_admin_events`・`get_admin_event`。6.5参照）を、M15〜M17で`events`のadmin書き込み境界（SECURITY DEFINER RPC `create_event`・`update_event`・`set_event_status`。6.5参照）を追加した。また、M18で`posts`のINSERT境界（`post_type`と`event_id`のCHECK、および参照できるeventをM11の公開範囲に限定する`posts_insert_own`。6.2参照）と`posts_event_id_idx`を追加した（`posts`の他のpolicy・ACL・triggerは変更していない）。さらに、M19で`event_participants`のprivacy baseline（`visibility`のdefaultを`private`へ変更、本人とactive adminのSELECT境界）を、M20で本人のwrite境界（SECURITY DEFINER RPC `set_my_event_participation`）を、M21でfan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`）を追加した（6.6参照。authenticatedへのbase tableの直接writeは許可していない）。また、S1〜S7で`songs`の公開状態（`status`列）・公開の読み取り（`get_public_songs`・`get_public_song`）・adminの読み取り（`get_admin_songs`・`get_admin_song`）・adminの書き込み（`create_song`・`update_song`・`set_song_status`）を追加した（いずれもSECURITY DEFINER RPC。base tableのRLS・権限は変更していない。6.10参照）。したがって現在は、`news`・`app_settings`の2テーブルがM9のdeny-by-defaultのままである（`app_settings`はクライアント全拒否が最終形）。
 - default privilege: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`により、postgresが今後`public`スキーマに作成するtableへのanon/authenticatedの自動的なtable権限付与を除去した。service_roleのdefault privilege、sequence・function・typeのdefault privilege、schema権限は変更していない。今後もschemaの変更はmigration経由で行う方針を維持する。`supabase_admin`が作成するtableのdefault privilegeは変更していない。
-- 公開読み取り（news・songs）が必要な機能は、各tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`event_participants`は、本人のwrite（`set_my_event_participation`のRPC）、本人とadminのread（base tableのRLS）、fan-facingな参加者一覧（`get_event_participants`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
+- 公開読み取り（news）が必要な機能は、tableの最終RLS/RPCが実装されるまでクライアントから利用できない。`songs`は、公開の読み取り（`get_public_songs`・`get_public_song`のRPC。anonを含む）、adminの読み取り（`get_admin_songs`・`get_admin_song`）、adminの書き込み（`create_song`・`update_song`・`set_song_status`）が利用できる（いずれもDBレベル。画面・Storage・Next.jsの統合は未実装）。`event_participants`は、本人のwrite（`set_my_event_participation`のRPC）、本人とadminのread（base tableのRLS）、fan-facingな参加者一覧（`get_event_participants`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。`events`は、公開の読み取り（公開8列を明示して取得する）と、adminの読み取り（`get_admin_events`・`get_admin_event`のRPC）、adminの書き込み（`create_event`・`update_event`・`set_event_status`のRPC）が利用できる（いずれもDBレベル。画面とNext.jsの統合は未実装）。
 
 ### 現在のDB実装状況と最終要件の区別（events / event_participants / news / songs / login_attempts / app_settings）
 
-次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）、M13・M14でadminの読み取り境界（SECURITY DEFINER RPC）、M15〜M17でadminの書き込み境界（SECURITY DEFINER RPC）が実装済み、`event_participants`はM19〜M21で本人とadminのread（RLS）・本人のwrite（RPC）・fan-facingな参加者一覧（RPC）が実装済み、`news`・`songs`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6を参照。
+次の表は「MVPの最終要件（方針）」であり、現在のDB実装ではない。現在のDB実装は上記baselineのとおり、`login_attempts`はM10でactive adminのSELECTのみ実装済み、`app_settings`はM9でクライアント全拒否（最終形として実装済み）、`events`はM11・M12で公開の読み取り境界（行はRLS、列は公開8列）、M13・M14でadminの読み取り境界（SECURITY DEFINER RPC）、M15〜M17でadminの書き込み境界（SECURITY DEFINER RPC）が実装済み、`event_participants`はM19〜M21で本人とadminのread（RLS）・本人のwrite（RPC）・fan-facingな参加者一覧（RPC）が実装済み、`songs`はS1〜S7で公開状態と、公開の読み取り・adminの読み取り・adminの書き込み（いずれもSECURITY DEFINER RPC）が実装済み、`news`は全拒否で最終RLS/RPCは未実装である。`events`の現在の実装と最終要件は6.5、`event_participants`は6.6、`songs`は6.10を参照。
 
 ### RLSポリシーの基本方針（テーブル別）
 
@@ -1035,7 +1093,7 @@ OR (status = 'cancelled' AND first_published_at IS NOT NULL)
 | reports | admin(`is_admin()`)のみ`reports`本体をSELECT可（moderation用途）。通報者本人は本体へ直接SELECTせず、専用RPCで自分の通報のみ確認（`handled_by`は返さない）。対象ユーザー・第三者・anonは不可（RLS有効・policyは`reports_select_admin`の1件のみ。anonは権限なし、authenticatedはtable SELECTのみで一般ユーザーはRLSにより0行。通報者本人の閲覧は`get_my_reports()`のみ。6.7参照。実装済み） | ログイン済みactive本人のみ（`reporter_id=auth.uid()`、自己通報不可、fan-facingで閲覧可能な対象のみ、存在確認あり）。クライアントからの`reports`直接INSERTは不可（admin含む）。作成は`create_report()`（SECURITY DEFINER RPC）のみ。レート制限（5回/10分）はreportsのBEFORE INSERT triggerで実装済み（6.7参照） | クライアントからの直接UPDATE/DELETEは不可（通報者・adminとも）。adminによる処理は専用SECURITY DEFINER RPC `process_report()`（active adminのみ。`admin_logs`とatomic）経由のみ（実装済み）。`status`と`handled_by`/`handled_at`の整合はDB CHECK（`reports_handled_fields_consistency_check`）で保証。物理DELETEは行わない（6.7参照。実装済み） |
 | blocks | 本人のみ（自分がブロックした一覧） | ログイン済み本人 | 本人のみ |
 | news | `status='published'`かつ`published_at<=now()`は全員、`draft`または未来の`published_at`はadmin(`is_admin()`)のみ（最終要件。現在はM9により全拒否で最終RLS/RPCは未実装） | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
-| songs | 全員（最終要件。現在はM9により全拒否で最終RLS/RPCは未実装） | admin(`is_admin()`) のみ | admin(`is_admin()`) のみ |
+| songs | 公開の読み取り（実装済み。S2・S3）は、base tableではなく専用のSECURITY DEFINER RPC `get_public_songs`・`get_public_song`のみで、`status='public'`の楽曲だけを、anonを含む全員が（account statusやblockに依存せず）取得できる。`draft`を含む全件の読み取りは、専用RPC `get_admin_songs`・`get_admin_song`（active adminのみ。実装済み。S4a・S4b）のみ。base tableへのSELECTはadminを含め不可（6.10参照） | base tableへの直接INSERTは不可（admin含む）。作成は専用のSECURITY DEFINER RPC `create_song`（active adminのみ・常に`draft`・`admin_logs`とatomic。実装済み。S5）のみ | base tableへの直接UPDATE/DELETEは不可（admin含む）。内容の更新は`update_song`（S6）、公開状態の変更は`set_song_status`（S7）というSECURITY DEFINER RPC（いずれもactive adminのみ・`expected_updated_at`の完全一致による楽観的同時実行制御・`admin_logs`とatomic。実装済み）のみ。物理DELETEを行うRPCは未実装（削除の方針は未決定） |
 | admin_logs | admin(`is_admin()`) のみ | クライアントからの直接INSERTは不可（active admin自身も不可）。`moderate_post()`/`moderate_comment()`/`process_report()`等のSECURITY DEFINER RPCが、対象のstatus変更とatomicに記録する。将来のServer Action/Route HandlerはこれらのRPCを呼び出すのみで、`admin_logs`へ直接INSERTしない | 不可（追記のみ、更新・削除禁止。active admin自身も不可） |
 | login_attempts | admin(`is_admin()`) のみ（実装済み。M10。RLS policy `login_attempts_select_admin`、authenticatedはtable SELECTのみ、anonは権限なし） | クライアントからのINSERTは不可（実装済み）。サーバーサイド処理からのみ記録する設計だが、**記録経路は未実装** | 不可（クライアント直接操作不可。実装済み）。成功時の失敗履歴クリアもサーバーサイド処理のみ（**未実装**） |
 | app_settings | anon/authenticated（adminを含む）いずれも不可（確定。Q46）。参照はsignup trigger・`record_policy_consent()`等のDB内部処理・service roleに限定（6.13参照。クライアントからの直接アクセス拒否は実装済み。M9） | anon/authenticatedいずれも不可（確定。Q45。実装済み。M9） | anon/authenticatedいずれも不可（確定。Q45。実装済み。M9） |
@@ -1138,6 +1196,7 @@ RLSポリシーから`profiles.status='active'`かどうかを判定する専用
 - バケットごとにStorage RLSポリシーを設定し、アップロード権限を上記の通り制限する。
 - 上記5バケットはmigrationで管理する（確定）。原則としてmigration SQLでバケットを作成し、Storage policyと合わせてバージョン管理する。具体的な作成方法（SQL文の形式等）は、実装時点のSupabase公式仕様を確認して決定する。公式推奨方法や実環境上の制約と衝突する場合は、独自に仕様変更せず報告するものとする。
 - 各バケットに対応するDBカラム（`profiles.avatar_url`、`posts.image_url`、`events.image_url`、`news.image_url`、`songs.cover_image_url`）には、Storageのobject key（バケット内の相対パス）を保存し、完全なURLは保存しない（確定。6.1/6.2/6.5/6.9/6.10参照）。表示時はアプリ側の共通処理でURLを解決する。
+- `song-images`バケットとそのStorage policy、adminの画像アップロードの流れ、画像URLの解決は、現在は未実装である。`songs.cover_image_url`はDBのRPCがobject keyの形式（`{uuid}.{ext}`。extはlowercaseの`jpg`・`jpeg`・`png`・`webp`のみ）だけを検証し、objectの実在は確認しない（6.10参照）。
 - `post-images`の読み取り制御は`posts.status`と連動させ、`hidden`/`deleted`の投稿に紐づく画像を一般ユーザーが直接読み取れないようにする（確定。Storage側のアクセス制御で実現する方針）。object keyに`post_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`posts`行を特定し`posts.status`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。`avatars`・`event-images`・`song-images`にはこの連動要件は無い（`profiles`/`events`/`songs`には`posts`のような非表示状態が存在しないため）。
 - `news-images`の読み取り制御は、ニュース本文（6.9「表示制御の方針」）と同一の条件に連動させる（確定）。一般ユーザーが画像を閲覧できるのは`news.status='published'`**かつ**`published_at<=現在時刻`の場合のみとし、`draft`の場合、および`status='published'`でも`published_at`が未来（予約公開）の場合は、一般ユーザーは閲覧不可でadminのみ閲覧可能とする。これは`post-images`の`posts.status`連動と同じ考え方であり、画像のobject key（または画像URL）を直接知っている一般ユーザーによる、公開前・予約公開前コンテンツの画像への事前アクセスを防ぐことを目的とする。管理者はdraft・予約公開・公開済みのいずれの状態でも画像を閲覧・管理できる。object keyに`news_id`を含める（下記「ファイルパスの命名規則」参照）ことで、Storage policyがパスから対応する`news`行を特定し`news.status`・`published_at`を参照できるようにする。具体的なStorage RLSポリシーのSQLは本バージョンでは決定せず、実装時に設計する。
 
@@ -1208,9 +1267,11 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 - 公開の`/live`（LIVE一覧）の並び順・pagination（primaryの並び順、tie-breakの列、cursor方式かoffset方式か。本番では決定的な並び順が必要）。
 - `events`のクライアントからの物理DELETEを将来も禁止するか。
 - Storageのobject lifecycle（アップロード・差し替え・削除・孤児objectの掃除）。
-- Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認。
+- Next.js / Supabase client / PostgREST経由での`expected_updated_at`（version token）のintegrationの確認（eventsの`update_event`・`set_event_status`とsongsの`update_song`・`set_song_status`に共通）。
+- `songs`の物理DELETEを行うか（現在はDELETEのRPCがなく、不要な楽曲は`draft`へ戻せる。postgres・service_roleによる直接のDELETE自体を禁止するconstraintは現在ない）。
 
 （`posts.event_id`が公開可能なeventだけを参照できるようにする方法はM18で解消済み〔6.2参照〕。なお、`events`のSELECT policyを追加・変更する場合は`posts.event_id`の参照可能範囲への影響を必ず再評価するというセキュリティ維持要件が、6.5に定められている。）
+（`songs`の公開状態・公開の読み取り・adminの管理のRPCはS1〜S7で実装済み〔6.10参照〕。`songs`の公開状態（`status`）の意味を変更する場合は、公開の読み取りRPC（`get_public_songs`・`get_public_song`）を必ず再評価するというセキュリティ維持要件が、6.10に定められている。）
 （`event_participants`の参加者一覧のanonへの公開範囲・writeの方式・privacy defaultなどはM19〜M21で解消済み〔6.6参照〕。なお、events・profiles・blocksの公開範囲や参加表明のvisibilityの意味を変更する場合は、`get_event_participants`（M21）とM20への影響を必ず再評価するというセキュリティ維持要件が、6.6に定められている。）
 
 ---
@@ -1247,3 +1308,4 @@ v1.16時点のMVP仕様の未確定事項はすべて確定済みだが、その
 | v1.25 | 2026-09-28 | eventsのadmin書き込み境界（M15・M16・M17）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.5・6.11・8章・5.4・12章: eventsは「公開の読み取り=base tableのRLS+列単位のSELECT権限（M11・M12）／adminの読み取り=SECURITY DEFINER RPC（M13・M14）／adminの書き込み=SECURITY DEFINER RPC（M15〜M17）」の3層。authenticated/adminへのbase tableの直接write・`admin_logs`の直接writeは不可。3 RPCとも`is_admin()`（active adminのみ・`EVENT_MANAGEMENT_NOT_AUTHORIZED`・認可はvalidationより先）、EXECUTEはpostgres・authenticatedのみ（anon・PUBLIC・service_role不可）、owner=postgres・SECURITY DEFINER・VOLATILE・`search_path=`。M15 `create_event(title, venue, event_date, description, image_url, ticket_url) -> uuid`（id・status=draft・created_by=auth.uid()・created_at・updated_at・first_published_atはサーバー管理）と、create/update共通の内部helper `internal.normalize_event_content`（EXECUTEはpostgresのみ）。validation契約: title/venue trim後1〜100文字・description NULL可で最大5000文字（blankはNULL）・event_dateはNOT NULLの有限値（過去・未来可、範囲制限なし、infinity不可）・ticket_urlは小文字https限定の現在の実装をそのまま記載（userinfo・内部空白不可、`HTTPS://`は拒否、raw IDNとIPv6リテラルは受理、RFC完全準拠ではない）・image_urlはevent-images bucketのobject key（`{uuid}.{jpg,jpeg,png,webp}`、大文字小文字を区別せず受理しlowercaseで保存、objectの実在は未確認）。M16 `update_event(target_event_id, expected_updated_at, 内容6項目) -> void`: 全置換（NULLはクリア）・statusは変更しない・no-opは成功だがUPDATE/`updated_at`/audit変更なし・stale versionはno-opより先にEVENT_CONFLICT・不存在/NULLはEVENT_NOT_FOUND。M17 `set_event_status(target_event_id, new_status, expected_updated_at) -> void`: 許可される遷移はdraft→public/cancelled、public→cancelled、cancelled（未公開）→draft、cancelled（公開済み）→publicのみで、同一statusを含むそれ以外はINVALID_EVENT_TRANSITION（未公開cancelledから直接publicは不可）・first_published_atは既存triggerが管理し中止/再公開でも上書きされない。楽観的同時実行制御: `expected_updated_at`必須（NULLはINVALID_EVENT_VERSION）・`SELECT ... FOR UPDATE`のlock下でマイクロ秒まで完全一致・不一致はEVENT_CONFLICT・date_trunc/丸め/許容幅なし。JSの`Date`経由でミリ秒に丸められる可能性があるため取得した`updated_at`文字列を加工せず返す方針（PostgREST/Supabase/Next.js経由のintegrationは未確認のTODO）。audit: 成功したwriteごとに`admin_logs`へ1行をatomicに記録（`create_event`={to_status}、`update_event`={changed_fields（固定順・値は保存しない）}、`set_event_status`={from_status,to_status}）。events管理のエラーコード（read 4種・write 12種）を整理し、trigger内部の例外は通常のAPI契約に含めない。解消した判断事項（events admin writeの方式・RPC分割・validation上限・status遷移・楽観的同時実行制御・audit・エラー）を12章・6.5から削除し、残る項目（公開/liveの並び順/pagination・物理DELETE・posts.event_idの検証・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsのanon公開範囲とwrite方式）を更新。`/admin/events`の画面とNext.jsの統合は引き続き未実装 |
 | v1.26 | 2026-09-28 | `posts.event_id`の参照境界（M18）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。4章・6.2・6.5・8章・12章: `live_report`のMVP上の意味を「LIVE参加後の感想」から「特定のLIVEに紐づくファン投稿」（参加予定・事前の投稿・当日の投稿・感想・LIVEレポート・思い出投稿等を含む。DB値`live_report`は維持し、UI名称は将来「LIVE投稿」等にできる。post_typeの変更は確定していない）へ明確化。DB invariant `posts_post_type_event_id_check`: `normal`は`event_id IS NULL`、`live_report`は`event_id IS NOT NULL`（旧`posts_live_report_requires_event_id_check`を置換）。`posts_insert_own`は従来の条件（active本人・`author_id = auth.uid()`・`status='published'`）を維持し、`event_id IS NULL OR EXISTS (SELECT 1 FROM public.events e WHERE e.id = posts.event_id)`を追加。EXISTSにはeventsのRLS `events_select_public`が適用されるため、参照できるeventはM11の公開範囲（publicと、一度公開された後のcancelled）と一致し、M11がsingle source of truthとなる（postsは`first_published_at`を直接参照せず、helper・trigger・RPCの追加もない）。draft・未公開cancelled・不存在は参照不可。`event_date`は参照可否に使わない（未来・過去のpublic LIVEとも可）。一度公開されたLIVEは中止後も既存のevent relationを保持し、新規投稿も可能で、eventのstatus変更でpostは変更されない。参加登録（`event_participants`）・block・profile属性は参照可否に影響せず、同一ユーザーが同一eventへ複数のLIVE投稿を作成できる。existence oracleなし（draft・未公開cancelled・不存在は同一のRLS拒否〔現在の実装ではSQLSTATE 42501〕で区別できず、FK違反に到達しない。恒久的なAPI error contractではない）。service_role/postgresはRLSをbypassする既知のtrust boundary（clientからevent_idを書けるwrite pathはINSERTのみで、UPDATEでは`event_id`・`post_type`を変更できない）。`posts_event_id_idx`を追加（関連投稿の取得API・UIは未実装）。セキュリティ維持要件: eventsのSELECT policyの追加・変更時は`posts.event_id`の参照可能範囲への影響を再評価する。解消した既知の課題（`posts.event_id`がdraft等を参照できる問題）を6.5・12章から除去。残る未決定事項（公開/liveの並び順/pagination・物理DELETE・Storage object lifecycle・timestamp tokenのintegration確認・event_participantsの最終RLS/write方式・news・songs・Storage RLS）と、関連投稿UI・LIVE投稿作成UI・Next.js/PostgREST integrationが未実装である点は変更なし |
 | v1.27 | 2026-09-28 | `event_participants`の契約（M19・M20・M21）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.6・4章・8章・12章: 「base tableの読み取り（本人・active admin。RLS＋6列の列単位SELECT権限。M19）／本人のwrite（SECURITY DEFINER RPC `set_my_event_participation`。M20）／fan-facingな参加者一覧（SECURITY DEFINER RPC `get_event_participants`。M21）」の3層。authenticatedへのbase tableの直接writeは不可で、fan-facingな一般のSELECT policyもない。status（going/attended/cancelled。`events.status=cancelled`とは別概念）・visibility（public/private/attended。**defaultをpublicからprivateへ訂正**）の意味を明記。本人のreadはaccount statusに関係なく可（bannedを含む。UIの`/restricted`誘導とは別レイヤー）。M20: active本人のみ・desired-state API（NULLは「変更しない」ではない・同一状態はno-op）・新規行はpublic eventのみ（draft/cancelled/不存在は区別されない同一エラー）・goingはevent_date非依存・attendedは`event_date <= now()`で過去のpublic eventには直接登録可・新規cancelled行は不可・public eventの既存行は全遷移を許可（attendedは終端でない）・cancelled/draftのeventの既存行はno-op・visibilityのみの変更・cancelledへの変更のみ許可し肯定する方向への変更は拒否・physical DELETEなし・event FOR SHARE/participant FOR UPDATE（lock順events→participants）とINSERT ON CONFLICT DO NOTHING・M17のFOR UPDATEとの直列化・楽観的同時実行制御なし・エラー6種。M21: anon不可・active/suspendedの閲覧者のみ（banned/profileなし/uid NULLは0行）・`events.status=public`のみ（cancelledは公開履歴に関係なく0行。M11の公開範囲より狭い）・going/public・attended/public・attended/attendedのみ表示・participantのprofile active/suspendedのみ・双方向block・adminもbypassなし・返却6列（visibility・created_at・件数を返さない）・status_filter・keyset pagination（username,id）・page_size clamp 1〜100・cursor対象の存在は検証しない・不正UUIDは22P02の場合あり・検索/件数/詳細RPCなし・エラー2種。SECURITY DEFINER RPCのため、events/profiles/blocks/visibilityの変更時は`get_event_participants`の再評価が必要（維持要件）。M18（LIVE投稿は参加表明に依存しない）は不変。未実装: 件数（将来は同一のprivacy条件を使うこと）・検索・Realtime・通知・follow/DM・check-in/ticket検証・admin訂正・UI・Next.js/PostgREST integration |
+| v1.28 | 2026-09-28 | `songs`の契約（S1〜S7）とPROJECT_SPEC.mdを同期（ドキュメントのみ）。6.10・4章・6.11・8章・9章・12章: songsのbase table（RLS有効・policy 0件・anon/authenticatedの権限なし。adminも直接のSELECT・INSERT・UPDATE・DELETE不可）とSECURITY DEFINERのRPCによる読み書きの構成を記載。公開状態`status`（`draft`/`public`。デフォルト`draft`。`songs_status_check`。`draft ⇄ public`の両方向・同一statusはno-op・公開の条件として`release_date`/cover/descriptionの存在を要求しない・`update_song`はstatusを変えない）。公開の読み取り`get_public_songs`（`release_date DESC NULLS LAST, id DESC`のNULL安全なkeyset cursor・`INVALID_SONG_CURSOR`・page_size 1〜100）・`get_public_song`（draft・不存在・NULLは同じ0行）は、anonを含む全員が実行でき、account statusとblockに依存しない。adminの読み取り`get_admin_songs`（title検索・`SONG_SEARCH_TOO_LONG`・status filter・同じcursor）・`get_admin_song`（8列・`updated_at`はversion tokenとして加工せず返す。JSのDate経由のミリ秒への丸めに注意）。adminの書き込み`create_song`（常にdraft）・`update_song`（全置換・`expected_updated_at`の完全一致・`FOR UPDATE`・no-op・`changed_fields`の固定順）・`set_song_status`（`INVALID_SONG_STATUS`・no-op・versionを`update_song`と共有）と、内部helper `internal.normalize_song_content`（title 1〜100文字・description最大5000文字・cover keyは`{uuid}.{ext}`でlowercaseの拡張子のみ〔eventsのhelperとは異なり大文字の拡張子は拒否〕・release_dateはinfinity不可）。`admin_logs`のaction `create_song`/`update_song`/`set_song_status`（target_type `song`・値は記録しない）。Songsのエラーコード12種。Songs関連のapplication RPCは7本・内部helperは1本。未実装: `song-images`のStorage・画像アップロード・画面（`/music`・`/music/[id]`・`/admin/music`）・Next.js/PostgREST integration・物理DELETEのRPC・外部の配信リンク・歌詞の専用機能 |
