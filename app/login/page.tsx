@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireActiveAdmin } from "@/lib/admin/authorize";
@@ -60,6 +61,11 @@ export default async function LoginPage({
     <main>
       <h1>ログイン</h1>
       <LoginForm nextPath={nextPath} />
+      <p>
+        {/* F1: general member signup now exists — linked here, existing
+            admin login flow above is otherwise unchanged. */}
+        アカウントをお持ちでない方は <Link href="/signup">会員登録</Link>
+      </p>
     </main>
   );
 }
