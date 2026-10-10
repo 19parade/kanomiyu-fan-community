@@ -80,6 +80,23 @@ export async function generateMetadata({
  * unpublished after being viewed must not keep serving a cached "public"
  * response to a later visitor — there is no static/ISR caching here to
  * stale on.
+ *
+ * P3 §4 (real HTTP 404 for draft/nonexistent/invalid ids): this segment
+ * deliberately has no loading.tsx of its own, and /music/page.tsx +
+ * /music/loading.tsx were moved into the `(list)` route group specifically
+ * so that group's Suspense boundary does not extend to this sibling segment
+ * (see Next.js's route-groups doc, "Opting specific route segments into
+ * sharing a layout, while keeping others out"). With no Suspense boundary
+ * anywhere above the notFound() call for this route, Next.js renders this
+ * page to completion server-side before the response starts streaming, so
+ * a draft/nonexistent/malformed id now gets a genuine HTTP 404 status
+ * (confirmed via `curl -i`) instead of the earlier 200-with-noindex "soft
+ * 404" — see the local notFound()/loading() docs' own "Status Codes"
+ * section for why a Suspense boundary forecloses this. The trade-off is
+ * that this page no longer shows an instant loading skeleton while its one
+ * RPC call resolves; for a single lightweight query this is the same
+ * blocking-render behavior the existing /admin/music/[id] edit page already
+ * uses without a loading.tsx.
  */
 export default async function SongDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

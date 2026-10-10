@@ -1,8 +1,18 @@
+import type { Metadata } from "next";
+
 import { MusicList, type PublicSongCard } from "@/components/music/MusicList";
 import { getSongImagePublicUrl } from "@/lib/song-images/public-url";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const INITIAL_PAGE_SIZE = 20;
+
+// Static (not generateMetadata): this page's title/description never
+// depend on request data — unlike /music/[id], there is nothing
+// draft/private that could leak through it.
+export const metadata: Metadata = {
+  title: "楽曲一覧",
+  description: "公開中の楽曲一覧です。",
+};
 
 // The exact 4 columns get_public_songs() returns (S2) — never widened.
 type PublicSongRpcRow = {
