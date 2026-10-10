@@ -110,20 +110,22 @@ export default async function SongDetailPage({ params }: { params: Promise<{ id:
   const coverImageUrl = getSongImagePublicUrl(supabase, song.cover_image_url);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
       <p className="mb-4">
-        <Link href="/music" className="text-blue-600 underline">
+        <Link href="/music" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
           ← 楽曲一覧へ戻る
         </Link>
       </p>
 
       <SongCoverImage src={coverImageUrl} alt={`${song.title}のジャケット画像`} />
 
-      <h1 className="mt-4 text-2xl font-bold break-words">{song.title}</h1>
-      <p className="mt-1 text-sm text-gray-500">{formatReleaseDate(song.release_date)}</p>
+      <h1 className="mt-6 text-2xl font-bold break-words sm:text-3xl">{song.title}</h1>
+      <p className="mt-1 text-sm text-muted">{formatReleaseDate(song.release_date)}</p>
 
       {song.description ? (
-        <p className="mt-6 whitespace-pre-wrap break-words text-sm leading-relaxed">{song.description}</p>
+        <p className="mt-6 whitespace-pre-wrap break-words rounded-2xl border border-border bg-surface p-6 text-sm leading-relaxed">
+          {song.description}
+        </p>
       ) : null}
     </main>
   );

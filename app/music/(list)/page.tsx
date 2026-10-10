@@ -54,8 +54,8 @@ export default async function MusicListPage() {
     // Never surface the raw DB error message to the browser.
     console.error("music list page: initial get_public_songs failed", error.message);
     return (
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <h1 className="text-2xl font-bold">楽曲一覧</h1>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <h1 className="text-2xl font-bold sm:text-3xl">楽曲一覧</h1>
         <p role="alert" className="mt-4 text-red-600">
           楽曲一覧の取得に失敗しました。
         </p>
@@ -72,8 +72,9 @@ export default async function MusicListPage() {
   }));
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold">楽曲一覧</h1>
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <h1 className="text-2xl font-bold sm:text-3xl">楽曲一覧</h1>
+      <p className="mt-2 text-sm text-muted">かのうみゆさんの楽曲一覧です。</p>
       <MusicList initialSongs={songs} initialHasMore={rows.length === INITIAL_PAGE_SIZE} />
     </main>
   );

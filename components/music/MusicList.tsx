@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 
+import { AlbumArtPlaceholder } from "./AlbumArtPlaceholder";
+import { buttonClassName } from "@/components/ui/Button";
+
 export type PublicSongCard = {
   id: string;
   title: string;
@@ -108,7 +111,14 @@ export function MusicList({
   }
 
   if (songs.length === 0) {
-    return <p className="mt-6 text-gray-500">楽曲はまだ公開されていません。</p>;
+    return (
+      <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-border bg-surface px-6 py-12 text-center">
+        <div className="h-12 w-12 overflow-hidden rounded-xl border border-border">
+          <AlbumArtPlaceholder compact />
+        </div>
+        <p className="text-muted">楽曲はまだ公開されていません。</p>
+      </div>
+    );
   }
 
   return (
@@ -116,8 +126,11 @@ export function MusicList({
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {songs.map((song) => (
           <li key={song.id}>
-            <Link href={`/music/${song.id}`} className="flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-md">
-              <div className="aspect-square w-full overflow-hidden rounded-md bg-gray-100">
+            <Link
+              href={`/music/${song.id}`}
+              className="group flex flex-col rounded-2xl p-2 transition-colors hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <div className="aspect-square w-full overflow-hidden rounded-2xl border border-border bg-surface transition-shadow group-hover:shadow-md">
                 {song.cover_image_url && !failedImageIds.has(song.id) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -128,13 +141,11 @@ export function MusicList({
                     onError={() => handleImageError(song.id)}
                   />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
-                    画像なし
-                  </div>
+                  <AlbumArtPlaceholder compact />
                 )}
               </div>
-              <p className="mt-2 line-clamp-2 break-words text-sm font-medium">{song.title}</p>
-              <p className="text-xs text-gray-500">{formatReleaseDate(song.release_date)}</p>
+              <p className="mt-2 line-clamp-2 break-words text-sm font-medium text-foreground">{song.title}</p>
+              <p className="text-xs text-muted">{formatReleaseDate(song.release_date)}</p>
             </Link>
           </li>
         ))}
@@ -143,12 +154,7 @@ export function MusicList({
       {error ? (
         <div role="alert" aria-live="polite" className="mt-4">
           <p className="text-red-600">{error}</p>
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="mt-2 rounded border px-4 py-2 text-sm"
-          >
+          <button type="button" onClick={loadMore} disabled={loadingMore} className={buttonClassName("secondary", "mt-2")}>
             再試行
           </button>
         </div>
@@ -156,12 +162,7 @@ export function MusicList({
 
       {hasMore ? (
         <div className="mt-6 flex justify-center">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="rounded border px-6 py-2 text-sm"
-          >
+          <button type="button" onClick={loadMore} disabled={loadingMore} className={buttonClassName("secondary")}>
             {loadingMore ? "読み込み中..." : "さらに読み込む"}
           </button>
         </div>
