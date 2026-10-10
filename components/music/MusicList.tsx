@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 
 export type PublicSongCard = {
@@ -23,8 +24,9 @@ function formatReleaseDate(value: string | null): string {
  * Never calls Supabase directly from the browser — every subsequent read
  * goes through the app's own, intentionally-public Route Handler.
  *
- * No link to a per-song detail page: `/music/[id]` does not exist yet
- * (P2). Cards are display-only in this phase.
+ * Each card links to `/music/[id]` (P2). The whole card is the link (larger
+ * tap target on mobile); pagination/"load more" state above is untouched by
+ * this change — only the per-card markup gained a wrapping `<Link>`.
  */
 export function MusicList({
   initialSongs,
@@ -113,25 +115,27 @@ export function MusicList({
     <div className="mt-6">
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {songs.map((song) => (
-          <li key={song.id} className="flex flex-col">
-            <div className="aspect-square w-full overflow-hidden rounded-md bg-gray-100">
-              {song.cover_image_url && !failedImageIds.has(song.id) ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={song.cover_image_url}
-                  alt={`${song.title}のジャケット画像`}
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  onError={() => handleImageError(song.id)}
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
-                  画像なし
-                </div>
-              )}
-            </div>
-            <p className="mt-2 line-clamp-2 break-words text-sm font-medium">{song.title}</p>
-            <p className="text-xs text-gray-500">{formatReleaseDate(song.release_date)}</p>
+          <li key={song.id}>
+            <Link href={`/music/${song.id}`} className="flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-md">
+              <div className="aspect-square w-full overflow-hidden rounded-md bg-gray-100">
+                {song.cover_image_url && !failedImageIds.has(song.id) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={song.cover_image_url}
+                    alt={`${song.title}のジャケット画像`}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    onError={() => handleImageError(song.id)}
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
+                    画像なし
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 line-clamp-2 break-words text-sm font-medium">{song.title}</p>
+              <p className="text-xs text-gray-500">{formatReleaseDate(song.release_date)}</p>
+            </Link>
           </li>
         ))}
       </ul>
