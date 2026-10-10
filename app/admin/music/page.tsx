@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { MusicAdminList, type AdminSongRow } from "@/components/admin/music/MusicAdminList";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -43,6 +45,9 @@ export default async function AdminMusicPage() {
     <main>
       <h1>楽曲管理</h1>
       <p>楽曲の一覧を確認できます。</p>
+      <p>
+        <Link href="/admin/music/new">楽曲を追加</Link>
+      </p>
       <MusicAdminList initialSongs={songs} initialHasMore={songs.length === INITIAL_PAGE_SIZE} />
     </main>
   );
