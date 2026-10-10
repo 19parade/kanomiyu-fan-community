@@ -33,6 +33,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_SONG_VERSION: "保存情報が古くなっています。最新内容を読み込み直してください。",
   SONG_NOT_FOUND: "この楽曲は見つかりませんでした。一覧から再度お試しください。",
   INVALID_REQUEST: "入力内容を確認してください。",
+  INVALID_SONG_STATUS: "公開状態の指定を確認してください。",
 };
 const GENERIC_ERROR_MESSAGE = "保存できませんでした。";
 
@@ -70,8 +71,16 @@ type EditSongFormProps = {
  * never reformatted. It is only ever replaced by the exact raw
  * `updated_at` string from a PATCH response.
  *
- * Status is display-only here — this form never calls `set_song_status`
- * and never sends a status value to the PATCH API.
+ * A5: publication status (draft/public) is changed via
+ * `PATCH /api/admin/music/[id]/status` (new route, wraps the existing
+ * set_song_status RPC unchanged). This control lives in the *same*
+ * component as the content-edit form specifically so both operations share
+ * one `versionToken`/`pending`/`conflict` state — the migration's own
+ * contract says content edits and status changes share one updated_at
+ * lineage, so two separately-held tokens in two different components could
+ * each go stale without the other knowing. A window.confirm() gates the
+ * actual request (no new UI library); status changes report success/
+ * conflict/error through the exact same banners as a content save.
  */
 export function EditSongForm({
   songId,
@@ -95,8 +104,14 @@ export function EditSongForm({
 
   // The version token this form will send as `expected_updated_at` on the
   // next save. Carried as-is from the server, never parsed/reformatted —
-  // see the module doc comment above.
+  // see the module doc comment above. Shared by both the content-edit save
+  // and the A5 status change below — there is only ever one token in this
+  // component, never two independently-tracked copies.
   const [versionToken, setVersionToken] = useState(initialUpdatedAt);
+  // A5: current publication status, updated locally after a successful
+  // status change (and, like versionToken, refreshed from the server via
+  // the page's key-remount after a conflict reload).
+  const [status, setStatus] = useState(initialStatus);
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -252,6 +267,69 @@ export function EditSongForm({
     }
   }
 
+  async function handleStatusChange(nextStatus: "draft" | "public") {
+    const confirmMessage =
+      nextStatus === "public"
+        ? "この楽曲を公開しますか？公開すると一般公開ページから閲覧できるようになります。"
+        : "この楽曲を下書きに戻しますか？\n\n" +
+          "下書きに戻すと、一般公開の一覧・詳細からは見えなくなります。ただし画像の保存先は" +
+          "公開バケットのため、画像のURLを既に知っている場合やブラウザ等にキャッシュされている" +
+          "場合、画像ファイル自体へのアクセスを完全に取り消せるわけではありません。";
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setPending(true);
+    setError(null);
+    setConflict(false);
+    setSuccessMessage(null);
+
+    try {
+      // JSON body (A5) — unlike the multipart content save above, there is
+      // no file here, so setting Content-Type explicitly is correct (not
+      // the "let the browser set the multipart boundary" case).
+      const response = await fetch(`/api/admin/music/${songId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_updated_at: versionToken, target_status: nextStatus }),
+      });
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const code = typeof body?.error === "string" ? body.error : null;
+
+        if (code === "SONG_VERSION_CONFLICT") {
+          setConflict(true);
+          setPending(false);
+          return;
+        }
+
+        setError((code && ERROR_MESSAGES[code]) ?? GENERIC_ERROR_MESSAGE);
+        setPending(false);
+        return;
+      }
+
+      const updated = body?.updated === true;
+      const newUpdatedAt = typeof body?.updated_at === "string" ? body.updated_at : versionToken;
+      const newStatus = typeof body?.status === "string" ? body.status : nextStatus;
+
+      // The response already carries everything the UI needs (status and
+      // the new token) — unlike a cover replace/remove, there is no hidden
+      // server-only state to resync, so this updates local state directly
+      // instead of going through router.refresh()/remount. That keeps any
+      // in-progress, unsaved content edits in the other fields intact.
+      setVersionToken(newUpdatedAt);
+      setStatus(newStatus);
+      setSuccessMessage(updated ? "公開状態を変更しました。" : "変更はありません。");
+      setPending(false);
+    } catch (fetchError) {
+      console.error("edit song form: status change request failed", fetchError);
+      setError(GENERIC_ERROR_MESSAGE);
+      setPending(false);
+    }
+  }
+
   function handleReloadAfterConflict() {
     // Discards any unsaved local edits in this instance — disclosed in the
     // conflict message below. Causes app/admin/music/[id]/page.tsx to
@@ -267,8 +345,21 @@ export function EditSongForm({
   return (
     <div>
       <p>
-        現在の公開状態: <strong>{statusLabel(initialStatus)}</strong>
+        現在の公開状態: <strong>{statusLabel(status)}</strong>
       </p>
+
+      <section>
+        <h2>公開状態の操作</h2>
+        {status === "draft" ? (
+          <button type="button" disabled={pending} onClick={() => handleStatusChange("public")}>
+            公開する
+          </button>
+        ) : (
+          <button type="button" disabled={pending} onClick={() => handleStatusChange("draft")}>
+            下書きに戻す
+          </button>
+        )}
+      </section>
 
       <section>
         <h2>現在のカバー画像</h2>

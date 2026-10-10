@@ -23,6 +23,11 @@ const DB_ERROR_STATUS: Record<string, number> = {
   SONG_SEARCH_TOO_LONG: 400,
   INVALID_SONG_STATUS_FILTER: 400,
   INVALID_SONG_CURSOR: 400,
+  // set_song_status() (A5, PATCH /api/admin/music/[id]/status) — see
+  // supabase/migrations/20260928130000_songs_admin_status.sql. Distinct from
+  // INVALID_SONG_STATUS_FILTER above (that one is the list's query-param
+  // validation; this one is the target_status argument to the RPC itself).
+  INVALID_SONG_STATUS: 400,
 };
 
 export type MappedSongDbError = { code: string; status: number };
