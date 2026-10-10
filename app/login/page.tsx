@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { Card } from "@/components/ui/Card";
 import { ContactLink } from "@/components/legal/LegalPage";
 import { resolveMemberAccess } from "@/lib/member/access";
+import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { LoginForm } from "./login-form";
@@ -80,14 +82,19 @@ export default async function LoginPage({
     // a missing/invalid profile row) and never guess a destination. No
     // internal detail (error message, missing column, etc.) is shown.
     return (
-      <main className="mx-auto max-w-md px-4 py-8">
-        <h1 className="text-2xl font-bold">ログイン</h1>
-        <p className="mt-6" role="alert">
-          アカウント情報を確認できませんでした。しばらくしてから再度お試しいただくか、お問い合わせください。
-        </p>
-        <p className="mt-2 text-sm">
-          お問い合わせ：<ContactLink />
-        </p>
+      <main className="mx-auto max-w-md px-4 py-10 sm:py-16">
+        <span className="inline-block rounded-full bg-foreground/5 px-3 py-1 text-xs font-bold text-muted">
+          {UNOFFICIAL_LABEL}
+        </span>
+        <h1 className="mt-3 text-2xl font-bold">ログイン</h1>
+        <Card className="mt-6 p-6">
+          <p role="alert" className="text-sm leading-relaxed">
+            アカウント情報を確認できませんでした。しばらくしてから再度お試しいただくか、お問い合わせください。
+          </p>
+          <p className="mt-3 text-sm text-muted">
+            お問い合わせ：<ContactLink />
+          </p>
+        </Card>
       </main>
     );
   }
@@ -95,11 +102,19 @@ export default async function LoginPage({
   // access.kind === "unauthenticated" from here on.
 
   return (
-    <main className="mx-auto max-w-md px-4 py-8">
-      <h1 className="text-2xl font-bold">ログイン</h1>
-      <LoginForm next={adminNext} />
-      <p className="mt-6 text-sm">
-        アカウントをお持ちでない方は <Link href="/signup" className="text-blue-600 underline">会員登録</Link>
+    <main className="mx-auto max-w-md px-4 py-10 sm:py-16">
+      <span className="inline-block rounded-full bg-foreground/5 px-3 py-1 text-xs font-bold text-muted">
+        {UNOFFICIAL_LABEL}
+      </span>
+      <h1 className="mt-3 text-2xl font-bold">ログイン</h1>
+      <Card className="mt-6 p-6 sm:p-8">
+        <LoginForm next={adminNext} />
+      </Card>
+      <p className="mt-6 text-center text-sm text-muted">
+        アカウントをお持ちでない方は{" "}
+        <Link href="/signup" className="font-bold text-brand underline-offset-2 hover:underline">
+          会員登録
+        </Link>
       </p>
     </main>
   );

@@ -3,7 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
 /**
  * Common login form (A1, generalized in F3-B — Client Component: needs
@@ -67,10 +71,11 @@ export function LoginForm({ next }: { next?: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
       <div>
-        <label htmlFor="email">メールアドレス</label>
-        <br />
+        <label htmlFor="email" className="block text-sm font-bold">
+          メールアドレス
+        </label>
         <input
           id="email"
           name="email"
@@ -80,11 +85,13 @@ export function LoginForm({ next }: { next?: string }) {
           disabled={pending}
           value={email}
           onChange={(event) => setEmail(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
       <div>
-        <label htmlFor="password">パスワード</label>
-        <br />
+        <label htmlFor="password" className="block text-sm font-bold">
+          パスワード
+        </label>
         <input
           id="password"
           name="password"
@@ -94,14 +101,15 @@ export function LoginForm({ next }: { next?: string }) {
           disabled={pending}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
       {error ? (
-        <p role="alert" aria-live="polite">
+        <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
         </p>
       ) : null}
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
         {pending ? "ログイン中..." : "ログイン"}
       </button>
     </form>

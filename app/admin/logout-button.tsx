@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 /**
@@ -57,11 +58,11 @@ export function LogoutButton() {
 
   return (
     <div>
-      <button type="button" onClick={handleLogout} disabled={pending}>
+      <button type="button" onClick={handleLogout} disabled={pending} className={buttonClassName("secondary")}>
         {pending ? "ログアウト中..." : "ログアウト"}
       </button>
       {error ? (
-        <p role="alert" aria-live="polite">
+        <p role="alert" aria-live="polite" className="mt-2 text-sm text-rose-600">
           {error}
         </p>
       ) : null}

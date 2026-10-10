@@ -2,7 +2,11 @@
 
 import { useState, type FormEvent } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
 // Mirrors public.handle_new_user()'s own validation exactly (see
 // supabase/migrations/20260920120721_signup_db_foundation.sql) — a
@@ -230,7 +234,11 @@ export function SignupForm() {
 
   if (success) {
     return (
-      <div className="mt-6" role="status" aria-live="polite">
+      <div
+        className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm leading-relaxed text-emerald-900"
+        role="status"
+        aria-live="polite"
+      >
         <p>
           ご登録ありがとうございます。確認メールを送信しましたので、メール内のリンクから登録を完了してください。
         </p>
@@ -239,9 +247,9 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4" noValidate>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
       <div>
-        <label htmlFor="signup-email" className="block text-sm font-medium">
+        <label htmlFor="signup-email" className="block text-sm font-bold">
           メールアドレス
         </label>
         <input
@@ -253,17 +261,17 @@ export function SignupForm() {
           disabled={pending}
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="mt-1 w-full rounded border px-3 py-2"
+          className={INPUT_CLASS}
         />
         {fieldErrors.email ? (
-          <p role="alert" className="mt-1 text-sm text-red-600">
+          <p role="alert" className="mt-1 text-sm text-rose-600">
             {fieldErrors.email}
           </p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="signup-password" className="block text-sm font-medium">
+        <label htmlFor="signup-password" className="block text-sm font-bold">
           パスワード
         </label>
         <div className="mt-1 flex items-center gap-2">
@@ -276,27 +284,27 @@ export function SignupForm() {
             disabled={pending}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded border px-3 py-2"
+            className={`${INPUT_CLASS} mt-0`}
           />
           <button
             type="button"
             onClick={() => setShowPassword((prev) => !prev)}
             disabled={pending}
-            className="shrink-0 rounded border px-2 py-2 text-xs"
+            className={buttonClassName("secondary", "shrink-0 px-3 py-3 text-xs")}
             aria-pressed={showPassword}
           >
             {showPassword ? "隠す" : "表示"}
           </button>
         </div>
         {fieldErrors.password ? (
-          <p role="alert" className="mt-1 text-sm text-red-600">
+          <p role="alert" className="mt-1 text-sm text-rose-600">
             {fieldErrors.password}
           </p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="signup-confirm-password" className="block text-sm font-medium">
+        <label htmlFor="signup-confirm-password" className="block text-sm font-bold">
           パスワード（確認）
         </label>
         <input
@@ -308,17 +316,17 @@ export function SignupForm() {
           disabled={pending}
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
-          className="mt-1 w-full rounded border px-3 py-2"
+          className={INPUT_CLASS}
         />
         {fieldErrors.confirmPassword ? (
-          <p role="alert" className="mt-1 text-sm text-red-600">
+          <p role="alert" className="mt-1 text-sm text-rose-600">
             {fieldErrors.confirmPassword}
           </p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="signup-username" className="block text-sm font-medium">
+        <label htmlFor="signup-username" className="block text-sm font-bold">
           ユーザー名
         </label>
         <input
@@ -330,20 +338,20 @@ export function SignupForm() {
           disabled={pending}
           value={username}
           onChange={(event) => setUsername(event.target.value)}
-          className="mt-1 w-full rounded border px-3 py-2"
+          className={INPUT_CLASS}
         />
-        <p className="mt-1 text-xs text-gray-500">
+        <p className="mt-1 text-xs text-muted">
           半角英小文字・数字・アンダースコアのみ、3〜20文字。登録後は変更できません。今後提供予定のプロフィール機能（準備中）で使われる場合があります。
         </p>
         {fieldErrors.username ? (
-          <p role="alert" className="mt-1 text-sm text-red-600">
+          <p role="alert" className="mt-1 text-sm text-rose-600">
             {fieldErrors.username}
           </p>
         ) : null}
       </div>
 
       <div>
-        <label htmlFor="signup-display-name" className="block text-sm font-medium">
+        <label htmlFor="signup-display-name" className="block text-sm font-bold">
           表示名
         </label>
         <input
@@ -355,28 +363,30 @@ export function SignupForm() {
           disabled={pending}
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
-          className="mt-1 w-full rounded border px-3 py-2"
+          className={INPUT_CLASS}
         />
         {fieldErrors.displayName ? (
-          <p role="alert" className="mt-1 text-sm text-red-600">
+          <p role="alert" className="mt-1 text-sm text-rose-600">
             {fieldErrors.displayName}
           </p>
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4">
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
             checked={agreeTerms}
             disabled={pending}
             onChange={(event) => setAgreeTerms(event.target.checked)}
-            className="mt-1"
+            className="mt-1 h-4 w-4 accent-brand"
           />
-          <a href="/terms" target="_blank" rel="noreferrer" className="text-blue-600 underline">
-            利用規約
-          </a>
-          に同意します
+          <span>
+            <a href="/terms" target="_blank" rel="noreferrer" className="font-bold text-brand underline-offset-2 hover:underline">
+              利用規約
+            </a>
+            に同意します
+          </span>
         </label>
         <label className="flex items-start gap-2 text-sm">
           <input
@@ -384,31 +394,29 @@ export function SignupForm() {
             checked={agreePrivacy}
             disabled={pending}
             onChange={(event) => setAgreePrivacy(event.target.checked)}
-            className="mt-1"
+            className="mt-1 h-4 w-4 accent-brand"
           />
-          <a href="/privacy" target="_blank" rel="noreferrer" className="text-blue-600 underline">
-            プライバシーポリシー
-          </a>
-          に同意します
+          <span>
+            <a href="/privacy" target="_blank" rel="noreferrer" className="font-bold text-brand underline-offset-2 hover:underline">
+              プライバシーポリシー
+            </a>
+            に同意します
+          </span>
         </label>
         {fieldErrors.consent ? (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-rose-600">
             {fieldErrors.consent}
           </p>
         ) : null}
       </div>
 
       {error ? (
-        <p role="alert" aria-live="polite" className="text-sm text-red-600">
+        <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
         </p>
       ) : null}
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-foreground px-4 py-2 text-background disabled:opacity-50"
-      >
+      <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
         {pending ? "登録中..." : "会員登録"}
       </button>
     </form>
