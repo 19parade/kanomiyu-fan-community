@@ -333,7 +333,7 @@ export function SignupForm() {
           className="mt-1 w-full rounded border px-3 py-2"
         />
         <p className="mt-1 text-xs text-gray-500">
-          半角英小文字・数字・アンダースコアのみ、3〜20文字。公開プロフィールURL（/fans/ユーザー名）に使用され、後から変更できません。
+          半角英小文字・数字・アンダースコアのみ、3〜20文字。登録後は変更できません。今後提供予定のプロフィール機能（準備中）で使われる場合があります。
         </p>
         {fieldErrors.username ? (
           <p role="alert" className="mt-1 text-sm text-red-600">
