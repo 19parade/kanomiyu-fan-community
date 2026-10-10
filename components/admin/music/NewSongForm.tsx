@@ -41,6 +41,9 @@ const GENERIC_ERROR_MESSAGE = "保存できませんでした。";
  * Always creates a draft: there is no status control in this form, and no
  * status field is ever sent (create_song's own contract always starts a
  * new song as 'draft' — see S5).
+ *
+ * On success, navigates to /admin/music/[id] (A4's edit page) using the id
+ * the API response itself returns — never a client-generated id.
  */
 export function NewSongForm() {
   const router = useRouter();
@@ -137,17 +140,19 @@ export function NewSongForm() {
       // manually here (see A3 report / existing ST3-ST5 precedent).
       const response = await fetch("/api/admin/music", { method: "POST", body: formData });
 
+      const body = await response.json().catch(() => null);
+
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
         const code = typeof body?.error === "string" ? body.error : null;
         setError((code && ERROR_MESSAGES[code]) ?? GENERIC_ERROR_MESSAGE);
         setPending(false);
         return;
       }
 
-      // A4 (edit page) does not exist yet — never navigate to a
-      // not-yet-implemented /admin/music/[id]. Go back to the list instead.
-      router.push("/admin/music");
+      // A4's edit page now exists. Navigate using the id the API itself
+      // returned — never a client-generated id.
+      const newId = typeof body?.id === "string" ? body.id : null;
+      router.push(newId ? `/admin/music/${newId}` : "/admin/music");
     } catch (fetchError) {
       console.error("new song form: request failed", fetchError);
       setError(GENERIC_ERROR_MESSAGE);

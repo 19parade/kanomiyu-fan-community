@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AdminSongRow = {
@@ -228,6 +229,7 @@ export function MusicAdminList({
                 <th scope="col">発売日</th>
                 <th scope="col">ステータス</th>
                 <th scope="col">更新日時</th>
+                <th scope="col">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -237,6 +239,9 @@ export function MusicAdminList({
                   <td>{song.release_date ?? "未設定"}</td>
                   <td>{statusLabel(song.status)}</td>
                   <td>{formatUpdatedAt(song.updated_at)}</td>
+                  <td>
+                    <Link href={`/admin/music/${song.id}`}>編集</Link>
+                  </td>
                 </tr>
               ))}
             </tbody>
