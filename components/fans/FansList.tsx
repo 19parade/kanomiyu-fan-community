@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useRef, useState, type FormEvent } from "react";
 
 import { AvatarInitial } from "@/components/ui/AvatarInitial";
@@ -32,10 +33,9 @@ function formatFanSince(value: string | null): string | null {
  * never calling Supabase directly from the browser — same architecture as
  * components/music/MusicList.tsx.
  *
- * Cards are intentionally NOT links in this phase: /fans/[username] (F4-B)
- * doesn't exist yet, and linking to it now would be a dead link (404 via
- * Next's generic not-found route, not a deliberate one). F4-B adds the
- * link when that page ships.
+ * Each card links to /fans/[username] (F4-B). Search/pagination/cursor
+ * logic above is unchanged from F4-A — only the card markup gained a
+ * wrapping <Link>, matching MusicList.tsx's own card-is-the-link pattern.
  */
 export function FansList({
   initialFans,
@@ -186,14 +186,19 @@ export function FansList({
             const fanSinceText = formatFanSince(fan.fan_since);
             return (
               <li key={fan.id}>
-                <Card className="flex items-center gap-3 p-4">
-                  <AvatarInitial label={fan.display_name} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-bold">{fan.display_name}</p>
-                    <p className="truncate text-sm text-muted">@{fan.username}</p>
-                    {fanSinceText ? <p className="mt-1 text-xs text-muted">{fanSinceText}</p> : null}
-                  </div>
-                </Card>
+                <Link
+                  href={`/fans/${fan.username}`}
+                  className="block rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                  <Card className="flex items-center gap-3 p-4 transition-shadow hover:shadow-md">
+                    <AvatarInitial label={fan.display_name} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-bold">{fan.display_name}</p>
+                      <p className="truncate text-sm text-muted">@{fan.username}</p>
+                      {fanSinceText ? <p className="mt-1 text-xs text-muted">{fanSinceText}</p> : null}
+                    </div>
+                  </Card>
+                </Link>
               </li>
             );
           })}
