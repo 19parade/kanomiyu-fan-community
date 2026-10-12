@@ -177,7 +177,15 @@ export function ProfileEditForm({
       // loading this form and submitting it. Supabase/PostgREST returns
       // this as an empty `data` array with no `error`, so checking only
       // `!error` would wrongly report success here.
-      if (!data || data.length === 0) {
+      //
+      // F4-C3: also require exactly one row, and that its id matches the
+      // caller's own userId. `profiles.id` is the primary key and the
+      // query is scoped by `.eq("id", userId)`, so neither condition
+      // should be reachable in practice — this is explicit defense in
+      // depth (and a safety net against a future refactor loosening the
+      // query) rather than a response to an observed failure mode.
+      if (!data || data.length !== 1 || data[0].id !== userId) {
+        console.error("profile edit: unexpected update result", data?.length ?? 0);
         setFormError("保存できませんでした。アカウントの状態をご確認いただくか、しばらくしてから再度お試しください。");
         setPending(false);
         return;
