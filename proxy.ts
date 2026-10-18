@@ -61,8 +61,12 @@ import { createServerClient } from "@supabase/ssr";
  * -----------------------------------------------------------------------
  */
 export const config = {
+  // robots.txt and sitemap.xml are excluded here so they always return
+  // their own real text/XML content (app/robots.ts / app/sitemap.ts each
+  // already honor MAINTENANCE_MODE themselves — disallow-all / empty list
+  // while gated), instead of the generic HTML maintenance page.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };
 
