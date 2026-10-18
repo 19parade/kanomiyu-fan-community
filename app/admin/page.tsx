@@ -13,6 +13,8 @@ export default function AdminPage() {
       <p>ログイン中です。</p>
       <nav>
         <Link href="/admin/music">楽曲管理</Link>
+        <br />
+        <Link href="/admin/reports">通報管理</Link>
       </nav>
       <LogoutButton />
     </main>
