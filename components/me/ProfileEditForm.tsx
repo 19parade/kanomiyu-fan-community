@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { buttonClassName } from "@/components/ui/Button";
 import { countBioCodePoints, MAX_BIO_LENGTH, normalizeBio, validateNormalizedBio } from "@/lib/profile/bio";
@@ -77,6 +77,20 @@ export function ProfileEditForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
+  // F5-D2b: double-submit guard. `pending` (React state) is NOT safe for
+  // this by itself — setState batching means several synchronous
+  // submit-event dispatches in the same tick can all read the same stale
+  // `pending === false` before any re-render lands, letting multiple
+  // UPDATE requests through (this exact failure mode was confirmed
+  // empirically for components/feed/PostForm.tsx's identical pre-fix
+  // pattern: 3 rapid clicks created 3 rows before a ref guard was added).
+  // `submittingRef` is a plain mutable ref, updated synchronously and
+  // immediately on the very first call, so every subsequent call in the
+  // same tick sees the updated value. `pending` state is kept only to
+  // drive the UI (disabled attribute, button label) — the validation and
+  // save logic below this point is otherwise unchanged.
+  const submittingRef = useRef(false);
+
   const bioCodePointCount = countBioCodePoints(normalizeBio(bioInput));
 
   function enterEditMode() {
@@ -86,6 +100,11 @@ export function ProfileEditForm({
     setFieldErrors({});
     setFormError(null);
     setJustSaved(false);
+    // Defensive reset: every handleSubmit exit path already resets this,
+    // so submittingRef.current should always be false by the time the
+    // user can click "編集" again — kept here as cheap insurance against
+    // a future refactor missing one of those paths.
+    submittingRef.current = false;
     setMode("edit");
   }
 
@@ -97,11 +116,16 @@ export function ProfileEditForm({
     setFanSinceInput(profile.fan_since ?? "");
     setFieldErrors({});
     setFormError(null);
+    submittingRef.current = false;
     setMode("view");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
     setFormError(null);
 
     const normalizedDisplayName = normalizeDisplayName(displayNameInput);
@@ -123,6 +147,7 @@ export function ProfileEditForm({
 
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
+      submittingRef.current = false;
       return;
     }
 
@@ -135,6 +160,7 @@ export function ProfileEditForm({
       console.error("profile edit: failed to create Supabase browser client", clientError);
       setFormError("保存できませんでした。しばらくしてから再度お試しください。");
       setPending(false);
+      submittingRef.current = false;
       return;
     }
 
@@ -167,6 +193,7 @@ export function ProfileEditForm({
             : "保存できませんでした。しばらくしてから再度お試しください。";
         setFormError(message);
         setPending(false);
+        submittingRef.current = false;
         return;
       }
 
@@ -188,10 +215,12 @@ export function ProfileEditForm({
         console.error("profile edit: unexpected update result", data?.length ?? 0);
         setFormError("保存できませんでした。アカウントの状態をご確認いただくか、しばらくしてから再度お試しください。");
         setPending(false);
+        submittingRef.current = false;
         return;
       }
 
       setPending(false);
+      submittingRef.current = false;
       setJustSaved(true);
       setMode("view");
       // Re-fetch app/me/page.tsx's Server Component data from the DB —
@@ -203,6 +232,7 @@ export function ProfileEditForm({
       console.error("profile edit: request threw", fetchError);
       setFormError("通信エラーが発生しました。ネットワーク環境をご確認のうえ、再度お試しください。");
       setPending(false);
+      submittingRef.current = false;
     }
   }
 
