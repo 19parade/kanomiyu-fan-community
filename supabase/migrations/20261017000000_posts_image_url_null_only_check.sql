@@ -1,0 +1,57 @@
+-- =============================================================================
+-- 20261017000000_posts_image_url_null_only_check.sql
+-- F5-D2c: public.posts.image_url をMVP期間中はNULL専用にするCHECK制約
+--
+-- 対象（本migrationに含まれるもの）:
+--   - public.posts に posts_image_url_null_only_check を追加
+--
+-- 本migrationに含まれないもの:
+--   - public.posts.image_url 列自体の削除・型変更（将来の画像機能追加に
+--     備え、列は維持する。F5-D2c指示5章「既存列自体は削除しない」）
+--   - RPC・RLS policy・GRANT/REVOKEの変更（いずれも行わない）
+--   - posts/他テーブルの他の列・index・triggerの変更
+--   - 既存51件のmigrationの変更
+--   - 画像アップロード機能の追加（F5-D2c指示8章「禁止事項」）
+--
+-- 仕様（PM確定、F5-D2c指示）:
+--   MVPはテキスト投稿のみのため、posts.image_url は常にNULLでなければ
+--   ならない。INSERT・UPDATEの両方に適用する（CHECK制約はPostgreSQLの
+--   仕様上、INSERT・UPDATEのいずれでも行の最終状態に対して評価されるため、
+--   本制約1本で両方をカバーする。トリガーやRPCでの個別実装は不要）。
+--
+-- 既存のRLS・GRANTとの関係:
+--   - posts_insert_own（20260928020000_posts_event_reference.sqlで定義）
+--     のWITH CHECKはimage_urlを検査していないため、INSERT時に任意の
+--     image_url値を指定できてしまうことがF5-D2bで確認された
+--     （author_id/post_type/event_id等は別の制約・RLSで防御済みだが、
+--     image_urlのみ無防備だった）。
+--   - posts_update_own（20260926090000_posts_rls.sqlで定義）のUSING/
+--     WITH CHECKも同様にimage_urlを検査していない。GRANT update
+--     (content, image_url) により、authenticatedはimage_url列への
+--     UPDATE自体は許可されている。
+--   - 本migrationはRLS・GRANTを変更せず、CHECK制約のみで「値としては
+--     NULL以外を一切許さない」という最終防衛線を追加する。これにより、
+--     RLSやGRANTが許可する操作であっても、image_urlに非NULL値を書き込む
+--     行は常にCHECK違反で拒否される。
+--
+-- 既存データへの影響（検証プロジェクトで読み取り専用確認済み。
+-- F5-D2c事前監査時点、posts_select_admin経由で全行を確認）:
+--   select count(*) from public.posts;                         -- 0
+--   select count(*) from public.posts where image_url is not null; -- 0
+--   したがって本制約を追加しても、既存行のCHECK違反によるmigration失敗の
+--   リスクはない（違反件数0件）。post_type別の内訳も0件のため、
+--   live_report等の他post_typeへの影響も存在しない。
+--
+-- 将来の画像機能追加時の申し送り:
+--   画像アップロード機能を追加する際は、本制約
+--   （posts_image_url_null_only_check）をDROP CONSTRAINTしたうえで、
+--   Storage object keyの形式検証等、適切なCHECK制約に置き換えること
+--   （songs.cover_image_url / events.image_url の既存実装パターンを参照）。
+--
+-- 20260920022832〜20261012120000（既存51件）はいずれも変更しない。
+-- =============================================================================
+
+alter table public.posts
+  add constraint posts_image_url_null_only_check
+  check (image_url is null);
+-- =============================================================================
