@@ -4,17 +4,21 @@ import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { buttonClassName } from "@/components/ui/Button";
 import { OPERATOR_NAME, SITE_NAME, UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
+import { resolveMemberAccess } from "@/lib/member/access";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
- * Top page (D2). Previously the untouched create-next-app template — this
- * is a from-scratch rebuild per D1's design proposal, scoped tightly to
- * this one page: no auth/session logic is introduced (this stays a plain
- * static Server Component, same as before), and it links only to routes
- * that actually exist today (/music, /signup, /login — per F3-A/F3-B,
- * community feed, LIVE and FANS have no UI yet, so this page does not
- * link to them, to avoid dead links).
+ * Top page (D2, bug-fix pass 2026-10-22). The hero CTA row used to always
+ * show 会員登録/ログイン regardless of session state — the same
+ * resolveMemberAccess() read used by components/SiteHeader.tsx now decides
+ * which buttons this card shows, so a signed-in visitor is not invited to
+ * sign up/log in again.
  */
-export default function Home() {
+export default async function Home() {
+  const supabase = await createSupabaseServerClient();
+  const access = await resolveMemberAccess(supabase);
+  const isSignedIn = access.kind !== "unauthenticated";
+
   return (
     <div className="flex flex-1 flex-col">
       <section className="relative overflow-hidden sm:mx-4 sm:mt-4 sm:rounded-3xl">
@@ -55,12 +59,25 @@ export default function Home() {
             <Link href="/music" className={buttonClassName("primary")}>
               楽曲を見る
             </Link>
-            <Link href="/signup" className={buttonClassName("secondary")}>
-              会員登録
-            </Link>
-            <Link href="/login" className={buttonClassName("ghost")}>
-              ログイン
-            </Link>
+            {isSignedIn ? (
+              <>
+                <Link href="/feed" className={buttonClassName("secondary")}>
+                  投稿一覧
+                </Link>
+                <Link href="/me" className={buttonClassName("ghost")}>
+                  マイページ
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/signup" className={buttonClassName("secondary")}>
+                  会員登録
+                </Link>
+                <Link href="/login" className={buttonClassName("ghost")}>
+                  ログイン
+                </Link>
+              </>
+            )}
           </div>
         </Card>
 

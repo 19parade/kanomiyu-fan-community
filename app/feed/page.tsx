@@ -86,6 +86,10 @@ export default async function FeedPage() {
           <Link href="/feed/new" className={buttonClassName("primary", "w-full sm:w-auto")}>
             新規投稿
           </Link>
+        ) : access.kind === "unauthenticated" ? (
+          <Link href="/login?next=/feed" className={buttonClassName("secondary", "w-full sm:w-auto")}>
+            ログインして投稿する
+          </Link>
         ) : null}
       </div>
       <FeedList initialPosts={posts} initialHasMore={rows.length === INITIAL_PAGE_SIZE} />
