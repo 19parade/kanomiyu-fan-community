@@ -96,7 +96,11 @@ export default async function LiveListPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <h1 className="text-2xl font-bold sm:text-3xl">LIVE</h1>
-      <p className="mt-2 text-sm text-muted">かのうみゆさんのLIVE情報一覧です。</p>
+      <p className="mt-2 text-sm text-muted">
+        かのうみゆさんのLIVE情報一覧です。
+        <br />
+        LIVE前のコミュニケーションや、LIVE後のレポート共有などに活用してください。
+      </p>
 
       <section className="mt-8">
         <h2 className="text-lg font-bold">開催予定</h2>
