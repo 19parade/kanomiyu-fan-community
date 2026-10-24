@@ -4,10 +4,17 @@ import { notFound } from "next/navigation";
 
 import { EventImage } from "@/components/live/EventImage";
 import { ParticipationStatus } from "@/components/live/ParticipationStatus";
+import { PostCard } from "@/components/feed/PostCard";
+import { PostForm } from "@/components/feed/PostForm";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
 import { resolveMemberAccess } from "@/lib/member/access";
+import { fetchAuthorsByIds } from "@/lib/posts/authors";
+import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
+import type { PublicPostListItem } from "@/lib/posts/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+const LIVE_BOARD_PAGE_SIZE = 20;
 
 const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -61,6 +68,52 @@ async function fetchPublicEvent(
   return { event, imageUrl };
 }
 
+/**
+ * LIVE機能 Phase 3: fetches this event's board posts (post_type='live_report',
+ * event_id = this event) using the exact same column list / author-batch /
+ * comments.status-filter pattern as app/feed/page.tsx's own query — see
+ * lib/posts/mapRows.ts's doc comment for why `.eq("comments.status",
+ * "published")` is required on top of RLS. posts_select_public_anon /
+ * posts_select_visible_authenticated already restrict which rows are
+ * visible at all (block/community-browsing gating); this call additionally
+ * narrows to this one event's live_report posts only, so other LIVEs'
+ * boards never leak into this page's list. No pagination UI in this phase —
+ * a flat `limit()` only.
+ */
+async function fetchLiveBoardPosts(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  eventId: string
+): Promise<{ ok: true; posts: PublicPostListItem[] } | { ok: false }> {
+  const { data, error } = await supabase
+    .from("posts")
+    .select(FEED_LIST_SELECT_COLUMNS)
+    .eq("status", "published")
+    .eq("post_type", "live_report")
+    .eq("event_id", eventId)
+    .eq("comments.status", "published")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(LIVE_BOARD_PAGE_SIZE);
+
+  if (error) {
+    console.error("live detail: board posts query failed", error.message);
+    return { ok: false };
+  }
+
+  const rows = (data ?? []) as unknown as PostListRow[];
+  const authorLookup = await fetchAuthorsByIds(
+    supabase,
+    rows.map((row) => row.author_id)
+  );
+
+  if (!authorLookup.ok) {
+    console.error("live detail: board author batch lookup failed");
+    return { ok: false };
+  }
+
+  return { ok: true, posts: rows.map((row) => mapPostListRow(row, authorLookup.authors)) };
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -88,11 +141,16 @@ export async function generateMetadata({
  * per events_select_public once first_published_at is set — PM方針「公開を
  * 継続し、画面上に開催中止と明示する」) rather than treated as not-found.
  *
- * Does not render a 掲示板 tab — out of scope for this phase (Phase 3).
  * Participation status (LIVE機能 Phase 2) is rendered below via
  * components/live/ParticipationStatus.tsx, a Client Component — this page
  * itself stays a Server Component and only does the read-only own-row fetch
  * (event_participants_select_own) needed to seed its initial state.
+ *
+ * LIVE掲示板 (LIVE機能 Phase 3): posts where post_type='live_report' AND
+ * event_id = this event. Reuses posts/comments/likes/reports wholesale —
+ * see fetchLiveBoardPosts()'s doc comment below. Not a separate tab; a
+ * plain section under the participation widget (no tab-switching UI was
+ * requested for this phase).
  */
 export default async function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -126,6 +184,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
 
   const doorsTimeText = formatEventDateTime(event.doors_time);
   const startTimeText = formatEventDateTime(event.start_time);
+  const boardResult = await fetchLiveBoardPosts(supabase, event.id);
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
@@ -202,6 +261,36 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         initialParticipation={initialParticipation}
         isLoggedIn={isLoggedIn}
       />
+
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
+        <h2 className="font-bold">LIVE掲示板</h2>
+        <p className="mt-1 text-sm text-muted">このLIVEについての投稿・感想をファン同士で共有できます。</p>
+
+        <div className="mt-4">
+          {access.kind === "member_active" || access.kind === "admin_active" ? (
+            <PostForm mode="create-live" userId={access.userId} eventId={event.id} />
+          ) : (
+            <p className="text-sm text-muted">
+              <Link href={`/login?next=/live/${event.id}`} className="font-bold text-brand underline-offset-2 hover:underline">
+                ログイン
+              </Link>
+              すると、この掲示板に投稿できます。
+            </p>
+          )}
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3">
+          {!boardResult.ok ? (
+            <p role="alert" className="text-red-600">
+              投稿一覧の取得に失敗しました。
+            </p>
+          ) : boardResult.posts.length === 0 ? (
+            <p className="text-sm text-muted">まだ投稿がありません。最初の投稿をしてみませんか？</p>
+          ) : (
+            boardResult.posts.map((post) => <PostCard key={post.id} post={post} />)
+          )}
+        </div>
+      </section>
     </main>
   );
 }

@@ -17,12 +17,18 @@ const TEXTAREA_CLASS =
 
 type PostFormProps =
   | { mode: "create"; userId: string }
+  | { mode: "create-live"; userId: string; eventId: string }
   | { mode: "edit"; postId: string; initialContent: string };
 
 /**
  * F5-D2: shared create/edit form for posts.content (text-only MVP —
- * post_type/event_id/image_url/status are never part of this form or its
- * payload). Mirrors components/me/ProfileEditForm.tsx's established
+ * image_url/status are never part of this form or its payload).
+ * `mode: "create-live"` (LIVE機能 Phase 3) reuses the exact same validation/
+ * submit/double-submit-guard logic as `mode: "create"`, only adding
+ * `post_type: "live_report"` and the target LIVE's `event_id` to the insert
+ * payload — posts_insert_own (M18) is what actually authorizes which event a
+ * live_report may reference; this component does not duplicate that check.
+ * Mirrors components/me/ProfileEditForm.tsx's established
  * pattern closely: client-side pre-validation mirroring the DB CHECK
  * constraint, an explicit minimal payload (never a spread of broader
  * state), a direct Supabase call from the browser (RLS is the actual
@@ -91,12 +97,15 @@ export function PostForm(props: PostFormProps) {
     }
 
     try {
-      if (props.mode === "create") {
-        const { data, error: insertError } = await supabase
-          .from("posts")
-          .insert({ author_id: props.userId, content: normalized })
-          .select("id")
-          .single();
+      if (props.mode === "create" || props.mode === "create-live") {
+        const { data, error: insertError } =
+          props.mode === "create-live"
+            ? await supabase
+                .from("posts")
+                .insert({ author_id: props.userId, content: normalized, post_type: "live_report", event_id: props.eventId })
+                .select("id")
+                .single()
+            : await supabase.from("posts").insert({ author_id: props.userId, content: normalized }).select("id").single();
 
         if (insertError || !data) {
           console.error("post form: insert failed", insertError?.code, insertError?.message);
@@ -110,7 +119,7 @@ export function PostForm(props: PostFormProps) {
           return;
         }
 
-        router.push(`/feed/${data.id}`);
+        router.push(props.mode === "create-live" ? `/live/${props.eventId}` : `/feed/${data.id}`);
         return;
       }
 
@@ -190,7 +199,7 @@ export function PostForm(props: PostFormProps) {
       ) : null}
 
       <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
-        {pending ? "送信中..." : props.mode === "create" ? "投稿する" : "更新する"}
+        {pending ? "送信中..." : props.mode === "edit" ? "更新する" : "投稿する"}
       </button>
     </form>
   );

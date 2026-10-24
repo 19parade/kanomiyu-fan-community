@@ -83,6 +83,10 @@ export async function GET(request: Request) {
     .from("posts")
     .select(FEED_LIST_SELECT_COLUMNS)
     .eq("status", "published")
+    // LIVE機能 Phase 3: LIVE掲示板の投稿(post_type='live_report')は対象LIVEの
+    // 掲示板(/live/[id])にのみ表示し、通常フィードには混在させない(PM方針)。
+    // DB・RLSの変更ではなく、このアプリ層のクエリにのみ絞り込みを追加する。
+    .eq("post_type", "normal")
     // F5-D1b §5: without this, an admin or the post's own author viewer
     // would see comments(count) include their own hidden/deleted comments
     // (comments_select_admin / comments_select_own have no status

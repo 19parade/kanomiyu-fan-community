@@ -36,6 +36,7 @@ export type PublicPostDetail = {
   id: string;
   author_id: string;
   post_type: PostType;
+  event_id: string | null;
   content: string;
   created_at: string;
   like_count: number;

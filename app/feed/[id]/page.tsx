@@ -32,6 +32,7 @@ type PostDetailRow = {
   id: string;
   author_id: string;
   post_type: string;
+  event_id: string | null;
   content: string;
   created_at: string;
   likes: { count: number }[] | null;
@@ -84,7 +85,7 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
 
   const { data: postRow, error: postError } = await supabase
     .from("posts")
-    .select("id, author_id, post_type, content, created_at, likes(count), comments(count)")
+    .select("id, author_id, post_type, event_id, content, created_at, likes(count), comments(count)")
     .eq("id", id)
     .eq("status", "published")
     .eq("comments.status", "published")
@@ -142,6 +143,7 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
     id: postRow.id,
     author_id: postRow.author_id,
     post_type: toPostType(postRow.post_type),
+    event_id: postRow.event_id,
     content: postRow.content,
     created_at: postRow.created_at,
     like_count: postRow.likes?.[0]?.count ?? 0,
@@ -244,9 +246,15 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   return (
     <main className="mx-auto min-w-0 max-w-2xl px-4 py-8 sm:px-6">
       <p className="mb-4">
-        <Link href="/feed" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
-          ← 投稿一覧へ戻る
-        </Link>
+        {post.event_id ? (
+          <Link href={`/live/${post.event_id}`} className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+            ← LIVE掲示板へ戻る
+          </Link>
+        ) : (
+          <Link href="/feed" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+            ← 投稿一覧へ戻る
+          </Link>
+        )}
       </p>
 
       <span className="inline-block rounded-full bg-foreground/5 px-3 py-1 text-xs font-bold text-muted">
