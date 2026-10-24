@@ -19,18 +19,28 @@ export const UNAVAILABLE_AUTHOR_LABEL = "（会員情報を表示できません
  * components/fans/FansList.tsx's formatFanSince() (a bare `date` with no
  * time/offset, which that function deliberately never round-trips through
  * `new Date()` to avoid a UTC/local off-by-one-day bug), a timestamptz
- * string already carries unambiguous instant information, so
- * `new Date(value)` here is safe and simply renders in the viewer's local
- * timezone.
+ * string already carries unambiguous instant information.
+ *
+ * Bug fix (2026-10-24, found via a real post on production): this used to
+ * read the instant back out with `Date.prototype.getFullYear()` /
+ * `getHours()` etc., which return values in the *server's own runtime
+ * timezone* (UTC on Vercel), not the viewer's — every post/comment
+ * timestamp rendered 9 hours behind actual Japan time. Fixed the same way
+ * lib/events/format.ts's formatEventDateTime() already does: pin
+ * `timeZone: "Asia/Tokyo"` explicitly via Intl.DateTimeFormat so the
+ * displayed wall-clock time is JST regardless of where this renders.
  */
 export function formatPostDate(value: string): string {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${year}年${month}月${day}日 ${hours}:${minutes}`;
+  try {
+    return new Intl.DateTimeFormat("ja-JP", {
+      dateStyle: "long",
+      timeStyle: "short",
+      timeZone: "Asia/Tokyo",
+    }).format(new Date(value));
+  } catch {
+    // Never let a formatting quirk crash the page — fall back to the raw value.
+    return value;
+  }
 }
 
 /**
