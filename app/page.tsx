@@ -82,6 +82,15 @@ export default async function Home() {
         </Card>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          <Card className="border-2 border-brand/30 p-6">
+            <h3 className="font-bold text-brand">LIVE</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              開催予定・開催終了のLIVE情報を公開しています。
+            </p>
+            <Link href="/live" className="mt-4 inline-block text-sm font-bold text-brand underline underline-offset-2">
+              LIVE一覧へ →
+            </Link>
+          </Card>
           <Card className="p-6">
             <h3 className="font-bold">MUSIC</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted">
@@ -90,12 +99,6 @@ export default async function Home() {
             <Link href="/music" className="mt-4 inline-block text-sm font-bold text-brand underline underline-offset-2">
               楽曲一覧へ →
             </Link>
-          </Card>
-          <Card className="p-6">
-            <h3 className="font-bold">これから、ここで</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              ファン同士の交流（投稿・コメント）やLIVE情報、ファン一覧は準備中です。公開まで、今しばらくお待ちください。
-            </p>
           </Card>
         </div>
       </main>

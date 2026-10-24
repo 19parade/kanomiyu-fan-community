@@ -40,6 +40,11 @@ export async function SiteHeader() {
                 ホーム
               </Link>
             </li>
+            <li>
+              <Link href="/live" className={`${NAV_LINK_CLASS} text-brand`}>
+                LIVE
+              </Link>
+            </li>
             {isSignedIn ? (
               <>
                 <li>
