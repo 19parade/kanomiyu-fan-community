@@ -265,7 +265,11 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
 
       <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
         <h2 className="font-bold">LIVE掲示板</h2>
-        <p className="mt-1 text-sm text-muted">このLIVEについての投稿・感想をファン同士で共有できます。</p>
+        <p className="mt-1 text-sm text-muted">
+          このLIVEについての情報・LIVE後の感想・レポートをファン同士で共有できます。
+          <br />
+          各投稿をタップするとコメントをすることができます。
+        </p>
 
         <div className="mt-4">
           {access.kind === "member_active" || access.kind === "admin_active" ? (
