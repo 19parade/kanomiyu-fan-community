@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { MusicAdminList, type AdminSongRow } from "@/components/admin/music/MusicAdminList";
+import { buttonClassName } from "@/components/ui/Button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const INITIAL_PAGE_SIZE = 20;
@@ -32,9 +33,11 @@ export default async function AdminMusicPage() {
     // Never surface the raw DB error message to the browser.
     console.error("admin music page: initial get_admin_songs failed", error.message);
     return (
-      <main>
-        <h1>楽曲管理</h1>
-        <p role="alert">楽曲一覧の取得に失敗しました。</p>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <h1 className="text-2xl font-bold sm:text-3xl">楽曲管理</h1>
+        <p role="alert" className="mt-4 text-red-600">
+          楽曲一覧の取得に失敗しました。
+        </p>
       </main>
     );
   }
@@ -42,12 +45,16 @@ export default async function AdminMusicPage() {
   const songs = (data ?? []) as AdminSongRow[];
 
   return (
-    <main>
-      <h1>楽曲管理</h1>
-      <p>楽曲の一覧を確認できます。</p>
-      <p>
-        <Link href="/admin/music/new">楽曲を追加</Link>
-      </p>
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold sm:text-3xl">楽曲管理</h1>
+          <p className="mt-2 text-sm text-muted">楽曲の一覧を確認できます。</p>
+        </div>
+        <Link href="/admin/music/new" className={buttonClassName("primary", "w-full sm:w-auto")}>
+          楽曲を追加
+        </Link>
+      </div>
       <MusicAdminList initialSongs={songs} initialHasMore={songs.length === INITIAL_PAGE_SIZE} />
     </main>
   );

@@ -4,7 +4,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { EventImage } from "@/components/live/EventImage";
+import { buttonClassName } from "@/components/ui/Button";
 import { isoToJstDateTimeLocalValue, jstDateTimeLocalToIso } from "@/lib/events/format";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
 const TITLE_MAX_LENGTH = 100;
 const VENUE_MAX_LENGTH = 100;
@@ -404,39 +408,40 @@ export function EditEventForm({
   }
 
   return (
-    <div>
-      <p>
-        現在の公開状態: <strong>{statusLabel(status)}</strong>
+    <div className="flex flex-col gap-6">
+      <p className="text-sm text-muted">
+        現在の公開状態: <strong className="text-foreground">{statusLabel(status)}</strong>
       </p>
 
       {conflict ? (
-        <div role="alert" aria-live="polite">
+        <div role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           <p>
             他の変更と競合しました。この画面を開いている間に、別の場所で内容が更新された可能性があります。
             最新の内容を読み込み直してください（このフォームの未保存の変更は失われます）。
           </p>
-          <button type="button" onClick={handleReloadAfterConflict}>
+          <button type="button" onClick={handleReloadAfterConflict} className={buttonClassName("secondary", "mt-2")}>
             最新の内容を読み込み直す
           </button>
         </div>
       ) : null}
 
       {successMessage && !conflict ? (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className="text-sm text-brand">
           {successMessage}
         </p>
       ) : null}
 
       {error && !conflict ? (
-        <p role="alert" aria-live="polite">
+        <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
         </p>
       ) : null}
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <div>
-          <label htmlFor="edit-event-title">タイトル</label>
-          <br />
+          <label htmlFor="edit-event-title" className="block text-sm font-bold">
+            タイトル
+          </label>
           <input
             id="edit-event-title"
             name="title"
@@ -446,12 +451,14 @@ export function EditEventForm({
             value={title}
             disabled={pending}
             onChange={(event) => setTitle(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-venue">会場</label>
-          <br />
+          <label htmlFor="edit-event-venue" className="block text-sm font-bold">
+            会場
+          </label>
           <input
             id="edit-event-venue"
             name="venue"
@@ -461,12 +468,14 @@ export function EditEventForm({
             value={venue}
             disabled={pending}
             onChange={(event) => setVenue(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-date">開催日時</label>
-          <br />
+          <label htmlFor="edit-event-date" className="block text-sm font-bold">
+            開催日時
+          </label>
           <input
             id="edit-event-date"
             name="event_date"
@@ -475,12 +484,14 @@ export function EditEventForm({
             value={eventDate}
             disabled={pending}
             onChange={(event) => setEventDate(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-doors-time">開場時刻（任意）</label>
-          <br />
+          <label htmlFor="edit-event-doors-time" className="block text-sm font-bold">
+            開場時刻（任意）
+          </label>
           <input
             id="edit-event-doors-time"
             name="doors_time"
@@ -488,12 +499,14 @@ export function EditEventForm({
             value={doorsTime}
             disabled={pending}
             onChange={(event) => setDoorsTime(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-start-time">開演時刻（任意）</label>
-          <br />
+          <label htmlFor="edit-event-start-time" className="block text-sm font-bold">
+            開演時刻（任意）
+          </label>
           <input
             id="edit-event-start-time"
             name="start_time"
@@ -501,25 +514,30 @@ export function EditEventForm({
             value={startTime}
             disabled={pending}
             onChange={(event) => setStartTime(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-description">説明文（任意）</label>
-          <br />
+          <label htmlFor="edit-event-description" className="block text-sm font-bold">
+            説明文（任意）
+          </label>
           <textarea
             id="edit-event-description"
             name="description"
+            rows={5}
             maxLength={DESCRIPTION_MAX_LENGTH}
             value={description}
             disabled={pending}
             onChange={(event) => setDescription(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-official-url">公式情報リンク（任意）</label>
-          <br />
+          <label htmlFor="edit-event-official-url" className="block text-sm font-bold">
+            公式情報リンク（任意）
+          </label>
           <input
             id="edit-event-official-url"
             name="official_url"
@@ -528,12 +546,14 @@ export function EditEventForm({
             value={officialUrl}
             disabled={pending}
             onChange={(event) => setOfficialUrl(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-event-ticket-url">チケットリンク（任意）</label>
-          <br />
+          <label htmlFor="edit-event-ticket-url" className="block text-sm font-bold">
+            チケットリンク（任意）
+          </label>
           <input
             id="edit-event-ticket-url"
             name="ticket_url"
@@ -542,51 +562,50 @@ export function EditEventForm({
             value={ticketUrl}
             disabled={pending}
             onChange={(event) => setTicketUrl(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
-        <fieldset disabled={pending}>
-          <legend>キービジュアル画像</legend>
-          <p>
+        <fieldset disabled={pending} className="rounded-xl border border-border p-4">
+          <legend className="px-1 text-sm font-bold">キービジュアル画像</legend>
+          <p className="text-sm text-muted">
             アップロードする画像は、ご自身が著作権を持つもの、または著作権者・公式から使用許諾を得たものに限ります。第三者の権利を侵害する画像はアップロードしないでください。
           </p>
 
           {hasCurrentCover ? (
-            <div>
-              <p>現在の画像</p>
-              <div style={{ width: 160, height: 90 }}>
+            <div className="mt-3">
+              <p className="text-sm font-bold">現在の画像</p>
+              <div style={{ width: 160, height: 90 }} className="mt-1 overflow-hidden rounded-xl border border-border">
                 <EventImage src={initialImageDisplayUrl} alt="現在のキービジュアル" />
               </div>
             </div>
           ) : (
-            <p>現在、画像は登録されていません。</p>
+            <p className="mt-3 text-sm text-muted">現在、画像は登録されていません。</p>
           )}
 
-          <label>
-            <input
-              type="radio"
-              name="cover-action-ui"
-              value="keep"
-              checked={coverAction === "keep"}
-              onChange={() => handleCoverActionChange("keep")}
-            />
-            現在の画像を維持
-          </label>
-          <br />
-          <label>
-            <input
-              type="radio"
-              name="cover-action-ui"
-              value="replace"
-              checked={coverAction === "replace"}
-              onChange={() => handleCoverActionChange("replace")}
-            />
-            画像を{hasCurrentCover ? "差し替える" : "登録する"}
-          </label>
-          {hasCurrentCover ? (
-            <>
-              <br />
-              <label>
+          <div className="mt-3 flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="cover-action-ui"
+                value="keep"
+                checked={coverAction === "keep"}
+                onChange={() => handleCoverActionChange("keep")}
+              />
+              現在の画像を維持
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="cover-action-ui"
+                value="replace"
+                checked={coverAction === "replace"}
+                onChange={() => handleCoverActionChange("replace")}
+              />
+              画像を{hasCurrentCover ? "差し替える" : "登録する"}
+            </label>
+            {hasCurrentCover ? (
+              <label className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="cover-action-ui"
@@ -596,13 +615,14 @@ export function EditEventForm({
                 />
                 画像を削除
               </label>
-            </>
-          ) : null}
+            ) : null}
+          </div>
 
           {coverAction === "replace" ? (
-            <div>
-              <label htmlFor="edit-event-image-file">新しい画像（JPEG・PNG・WebP、5MB以下）</label>
-              <br />
+            <div className="mt-3">
+              <label htmlFor="edit-event-image-file" className="block text-sm font-bold">
+                新しい画像（JPEG・PNG・WebP、5MB以下）
+              </label>
               <input
                 id="edit-event-image-file"
                 name="file"
@@ -611,32 +631,42 @@ export function EditEventForm({
                 ref={fileInputRef}
                 disabled={pending}
                 onChange={handleFileChange}
+                className="mt-1 block w-full text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-bold file:text-brand-foreground"
               />
               {newFilePreviewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={newFilePreviewUrl} alt="新しいキービジュアルのプレビュー" width={160} height={90} />
+                <img
+                  src={newFilePreviewUrl}
+                  alt="新しいキービジュアルのプレビュー"
+                  width={160}
+                  height={90}
+                  className="mt-2 rounded-xl border border-border object-cover"
+                />
               ) : null}
             </div>
           ) : null}
         </fieldset>
 
-        <button type="submit" disabled={pending}>
+        <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
           {pending ? "保存中..." : "内容を保存"}
         </button>
       </form>
 
       <div>
-        <p>公開状態の変更</p>
-        {allowedStatusActions(status, firstPublishedAt).map((action) => (
-          <button
-            key={action.targetStatus}
-            type="button"
-            onClick={() => handleStatusChange(action)}
-            disabled={pending}
-          >
-            {action.label}
-          </button>
-        ))}
+        <p className="text-sm font-bold">公開状態の変更</p>
+        <div className="mt-2 flex flex-wrap gap-3">
+          {allowedStatusActions(status, firstPublishedAt).map((action) => (
+            <button
+              key={action.targetStatus}
+              type="button"
+              onClick={() => handleStatusChange(action)}
+              disabled={pending}
+              className={buttonClassName("secondary")}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

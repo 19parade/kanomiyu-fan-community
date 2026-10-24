@@ -12,6 +12,11 @@ import {
   type ReportStatus,
 } from "@/lib/admin/reports/status";
 import { REPORT_REASONS } from "@/lib/reports/reasons";
+import { Card } from "@/components/ui/Card";
+import { buttonClassName } from "@/components/ui/Button";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
 type StatusFilterValue = ReportStatus | "all";
 
@@ -134,33 +139,41 @@ function TargetModerationControl({
   }
 
   return (
-    <div>
+    <div className="mt-2">
       {!confirming ? (
-        <button type="button" onClick={() => setConfirming(true)}>
+        <button type="button" onClick={() => setConfirming(true)} className={buttonClassName("secondary", "px-3 py-2 text-xs")}>
           {actionLabel}
         </button>
       ) : (
-        <div>
-          <p>{confirmText}</p>
+        <div className="rounded-xl border border-border bg-background p-3">
+          <p className="text-sm">{confirmText}</p>
           {error ? (
-            <p role="alert" aria-live="polite">
+            <p role="alert" aria-live="polite" className="mt-2 text-sm text-rose-600">
               {error}
             </p>
           ) : null}
-          <button type="button" onClick={() => void handleModerate()} disabled={pending}>
-            {pending ? "処理中..." : "実行する"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              submittingRef.current = false;
-              setError(null);
-              setConfirming(false);
-            }}
-            disabled={pending}
-          >
-            キャンセル
-          </button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void handleModerate()}
+              disabled={pending}
+              className={buttonClassName("primary", "px-3 py-2 text-xs")}
+            >
+              {pending ? "処理中..." : "実行する"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                submittingRef.current = false;
+                setError(null);
+                setConfirming(false);
+              }}
+              disabled={pending}
+              className={buttonClassName("ghost", "px-3 py-2 text-xs")}
+            >
+              キャンセル
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -265,27 +278,31 @@ function ReportRow({
         : false);
 
   return (
-    <tr>
-      <td>
-        {targetLabel}
+    <tr className="align-top">
+      <td className="px-4 py-3">
+        <p className="font-bold">{targetLabel}</p>
         {report.target ? (
           <>
-            <br />
-            <span>{report.target.content.slice(0, 80)}</span>
-            {report.target.status !== "published" ? <> （{report.target.status}）</> : null}
-            <br />
-            {canLinkToTarget ? (
-              report.target_type === "post" ? (
-                <Link href={`/feed/${report.target_id}`}>対象を確認</Link>
+            <p className="mt-1 text-muted [overflow-wrap:anywhere]">
+              {report.target.content.slice(0, 80)}
+              {report.target.status !== "published" ? <span className="text-xs">（{report.target.status}）</span> : null}
+            </p>
+            <p className="mt-1">
+              {canLinkToTarget ? (
+                report.target_type === "post" ? (
+                  <Link href={`/feed/${report.target_id}`} className="font-bold text-brand underline-offset-2 hover:underline">
+                    対象を確認
+                  </Link>
+                ) : (
+                  <Link href={`/feed/${report.target.post_id}`} className="font-bold text-brand underline-offset-2 hover:underline">
+                    対象の投稿を確認
+                  </Link>
+                )
               ) : (
-                <Link href={`/feed/${report.target.post_id}`}>対象の投稿を確認</Link>
-              )
-            ) : (
-              <span>非公開のため直接確認はできません（上記の内容をご覧ください）</span>
-            )}
-            <br />
-            <strong>対象の公開状態の操作</strong>
-            <br />
+                <span className="text-xs text-muted">非公開のため直接確認はできません（上記の内容をご覧ください）</span>
+              )}
+            </p>
+            <p className="mt-2 text-xs font-bold text-muted">対象の公開状態の操作</p>
             <TargetModerationControl
               targetType={report.target_type as "post" | "comment"}
               targetId={report.target_id}
@@ -294,35 +311,35 @@ function ReportRow({
             />
           </>
         ) : (
-          <>
-            <br />
-            <span>対象が見つかりません（削除済みの可能性があります）</span>
-          </>
+          <p className="mt-1 text-xs text-muted">対象が見つかりません（削除済みの可能性があります）</p>
         )}
       </td>
-      <td>{reasonLabel(report.reason)}</td>
-      <td>{report.detail ?? "—"}</td>
-      <td>
-        【{REPORT_STATUS_LABELS[report.status as ReportStatus] ?? report.status}】
+      <td className="px-4 py-3">{reasonLabel(report.reason)}</td>
+      <td className="px-4 py-3 [overflow-wrap:anywhere]">{report.detail ?? "—"}</td>
+      <td className="px-4 py-3">
+        <span className="inline-block rounded-full bg-foreground/5 px-2 py-0.5 text-xs font-bold text-muted">
+          {REPORT_STATUS_LABELS[report.status as ReportStatus] ?? report.status}
+        </span>
       </td>
-      <td>{formatTimestamp(report.created_at)}</td>
-      <td>{formatTimestamp(report.handled_at)}</td>
-      <td>{report.handled_by_display_name ?? (report.handled_by ? "（表示できません）" : "—")}</td>
-      <td>
+      <td className="px-4 py-3 text-muted">{formatTimestamp(report.created_at)}</td>
+      <td className="px-4 py-3 text-muted">{formatTimestamp(report.handled_at)}</td>
+      <td className="px-4 py-3 text-muted">{report.handled_by_display_name ?? (report.handled_by ? "（表示できません）" : "—")}</td>
+      <td className="px-4 py-3">
         {allowedNext.length === 0 ? (
-          <span>対応済み</span>
+          <span className="text-xs text-muted">対応済み</span>
         ) : mode === "view" ? (
-          <button type="button" onClick={() => setMode("form")}>
+          <button type="button" onClick={() => setMode("form")} className={buttonClassName("secondary", "px-3 py-2 text-xs")}>
             対応する
           </button>
         ) : (
-          <div>
-            <label>
+          <div className="w-64 rounded-xl border border-border bg-background p-3">
+            <label className="block text-xs font-bold">
               変更後の状態
               <select
                 value={nextStatus}
                 disabled={pending}
                 onChange={(event) => setNextStatus(event.target.value as ReportStatus)}
+                className={INPUT_CLASS}
               >
                 <option value="">選択してください</option>
                 {allowedNext.map((status) => (
@@ -332,44 +349,51 @@ function ReportRow({
                 ))}
               </select>
             </label>
-            <br />
-            <label>
+            <label className="mt-3 block text-xs font-bold">
               メモ（任意）
-              <br />
               <textarea
                 rows={2}
                 disabled={pending}
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="対応内容の記録（会員には公開されません）"
+                className={INPUT_CLASS}
               />
             </label>
             {error ? (
-              <p role="alert" aria-live="polite">
+              <p role="alert" aria-live="polite" className="mt-2 text-xs text-rose-600">
                 {error}
               </p>
             ) : null}
             {nextStatus ? (
-              <p>
+              <p className="mt-2 text-xs text-muted">
                 この通報を「{REPORT_STATUS_LABELS[nextStatus]}」に変更します。対象の投稿・コメントの表示状態は変わりません。よろしいですか？
               </p>
             ) : null}
-            <button type="button" onClick={() => void handleProcess()} disabled={pending || !nextStatus}>
-              {pending ? "処理中..." : "この内容で確定する"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                submittingRef.current = false;
-                setError(null);
-                setNote("");
-                setNextStatus("");
-                setMode("view");
-              }}
-              disabled={pending}
-            >
-              キャンセル
-            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleProcess()}
+                disabled={pending || !nextStatus}
+                className={buttonClassName("primary", "px-3 py-2 text-xs")}
+              >
+                {pending ? "処理中..." : "この内容で確定する"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  submittingRef.current = false;
+                  setError(null);
+                  setNote("");
+                  setNextStatus("");
+                  setMode("view");
+                }}
+                disabled={pending}
+                className={buttonClassName("ghost", "px-3 py-2 text-xs")}
+              >
+                キャンセル
+              </button>
+            </div>
           </div>
         )}
       </td>
@@ -504,15 +528,17 @@ export function ReportsAdminList({
   }
 
   return (
-    <div>
+    <div className="mt-6">
       <div>
-        <label htmlFor="reports-status-filter">状態で絞り込み</label>
-        <br />
+        <label htmlFor="reports-status-filter" className="block text-sm font-bold">
+          状態で絞り込み
+        </label>
         <select
           id="reports-status-filter"
           value={statusFilter}
           disabled={loading}
           onChange={(event) => setStatusFilter(event.target.value as StatusFilterValue)}
+          className={[INPUT_CLASS, "sm:max-w-xs"].join(" ")}
         >
           {REPORT_STATUS_FILTER_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -522,37 +548,43 @@ export function ReportsAdminList({
         </select>
       </div>
 
-      {loading ? <p aria-live="polite">読み込み中...</p> : null}
+      {loading ? (
+        <p aria-live="polite" className="mt-4 text-sm text-muted">
+          読み込み中...
+        </p>
+      ) : null}
 
       {error ? (
-        <div role="alert" aria-live="polite">
+        <div role="alert" aria-live="polite" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           <p>{error}</p>
-          <button type="button" onClick={handleRetry} disabled={loading}>
+          <button type="button" onClick={handleRetry} disabled={loading} className={buttonClassName("secondary", "mt-2")}>
             再試行
           </button>
         </div>
       ) : null}
 
       {!loading && !error && reports.length === 0 ? (
-        <p>{statusFilter !== "all" ? "この状態の通報はありません。" : "通報はまだありません。"}</p>
+        <p className="mt-4 text-sm text-muted">
+          {statusFilter !== "all" ? "この状態の通報はありません。" : "通報はまだありません。"}
+        </p>
       ) : null}
 
       {reports.length > 0 ? (
-        <div style={{ overflowX: "auto" }}>
-          <table>
+        <Card className="mt-4 overflow-x-auto p-0">
+          <table className="w-full min-w-[960px] text-sm">
             <thead>
-              <tr>
-                <th scope="col">対象</th>
-                <th scope="col">理由</th>
-                <th scope="col">詳細</th>
-                <th scope="col">状態</th>
-                <th scope="col">通報日時</th>
-                <th scope="col">対応日時</th>
-                <th scope="col">対応者</th>
-                <th scope="col">操作</th>
+              <tr className="border-b border-border text-left text-muted">
+                <th scope="col" className="px-4 py-3 font-bold">対象</th>
+                <th scope="col" className="px-4 py-3 font-bold">理由</th>
+                <th scope="col" className="px-4 py-3 font-bold">詳細</th>
+                <th scope="col" className="px-4 py-3 font-bold">状態</th>
+                <th scope="col" className="px-4 py-3 font-bold">通報日時</th>
+                <th scope="col" className="px-4 py-3 font-bold">対応日時</th>
+                <th scope="col" className="px-4 py-3 font-bold">対応者</th>
+                <th scope="col" className="px-4 py-3 font-bold">操作</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {reports.map((report) => (
                 <ReportRow
                   key={report.id}
@@ -563,11 +595,16 @@ export function ReportsAdminList({
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       ) : null}
 
       {hasMore ? (
-        <button type="button" onClick={handleLoadMore} disabled={loading || loadingMore}>
+        <button
+          type="button"
+          onClick={handleLoadMore}
+          disabled={loading || loadingMore}
+          className={buttonClassName("secondary", "mt-4 w-full sm:w-auto")}
+        >
           {loadingMore ? "読み込み中..." : "さらに読み込む"}
         </button>
       ) : null}

@@ -27,24 +27,32 @@ export default async function AdminReportsPage() {
 
   if (!result.ok) {
     return (
-      <main>
-        <p>
-          <Link href="/admin">← 管理画面トップへ戻る</Link>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <p className="mb-4">
+          <Link href="/admin" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+            ← 管理画面トップへ戻る
+          </Link>
         </p>
-        <h1>通報一覧</h1>
-        <p role="alert">通報一覧の取得に失敗しました。</p>
+        <h1 className="text-2xl font-bold sm:text-3xl">通報一覧</h1>
+        <p role="alert" className="mt-4 text-red-600">
+          通報一覧の取得に失敗しました。
+        </p>
       </main>
     );
   }
 
   return (
-    <main>
-      <p>
-        <Link href="/admin">← 管理画面トップへ戻る</Link>
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <p className="mb-4">
+        <Link href="/admin" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+          ← 管理画面トップへ戻る
+        </Link>
       </p>
-      <h1>通報一覧</h1>
-      <p>会員から寄せられた通報を確認し、対応状況を記録します。</p>
-      <ReportsAdminList initialReports={result.reports} initialHasMore={result.hasMore} />
+      <h1 className="text-2xl font-bold sm:text-3xl">通報一覧</h1>
+      <p className="mt-2 text-sm text-muted">会員から寄せられた通報を確認し、対応状況を記録します。</p>
+      <div className="mt-6">
+        <ReportsAdminList initialReports={result.reports} initialHasMore={result.hasMore} />
+      </div>
     </main>
   );
 }

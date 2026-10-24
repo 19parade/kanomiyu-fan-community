@@ -3,7 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
 import { jstDateTimeLocalToIso } from "@/lib/events/format";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
 const TITLE_MAX_LENGTH = 100; // UX hint only; internal.normalize_event_content() is authoritative.
 const VENUE_MAX_LENGTH = 100; // same.
@@ -105,10 +109,11 @@ export function NewEventForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <div>
-        <label htmlFor="new-event-title">タイトル</label>
-        <br />
+        <label htmlFor="new-event-title" className="block text-sm font-bold">
+          タイトル
+        </label>
         <input
           id="new-event-title"
           name="title"
@@ -118,12 +123,14 @@ export function NewEventForm() {
           value={title}
           disabled={pending}
           onChange={(event) => setTitle(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-venue">会場</label>
-        <br />
+        <label htmlFor="new-event-venue" className="block text-sm font-bold">
+          会場
+        </label>
         <input
           id="new-event-venue"
           name="venue"
@@ -133,12 +140,14 @@ export function NewEventForm() {
           value={venue}
           disabled={pending}
           onChange={(event) => setVenue(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-date">開催日時</label>
-        <br />
+        <label htmlFor="new-event-date" className="block text-sm font-bold">
+          開催日時
+        </label>
         <input
           id="new-event-date"
           name="event_date"
@@ -147,12 +156,14 @@ export function NewEventForm() {
           value={eventDate}
           disabled={pending}
           onChange={(event) => setEventDate(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-doors-time">開場時刻（任意）</label>
-        <br />
+        <label htmlFor="new-event-doors-time" className="block text-sm font-bold">
+          開場時刻（任意）
+        </label>
         <input
           id="new-event-doors-time"
           name="doors_time"
@@ -160,12 +171,14 @@ export function NewEventForm() {
           value={doorsTime}
           disabled={pending}
           onChange={(event) => setDoorsTime(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-start-time">開演時刻（任意）</label>
-        <br />
+        <label htmlFor="new-event-start-time" className="block text-sm font-bold">
+          開演時刻（任意）
+        </label>
         <input
           id="new-event-start-time"
           name="start_time"
@@ -173,25 +186,30 @@ export function NewEventForm() {
           value={startTime}
           disabled={pending}
           onChange={(event) => setStartTime(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-description">説明文（任意）</label>
-        <br />
+        <label htmlFor="new-event-description" className="block text-sm font-bold">
+          説明文（任意）
+        </label>
         <textarea
           id="new-event-description"
           name="description"
+          rows={5}
           maxLength={DESCRIPTION_MAX_LENGTH}
           value={description}
           disabled={pending}
           onChange={(event) => setDescription(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-official-url">公式情報リンク（任意）</label>
-        <br />
+        <label htmlFor="new-event-official-url" className="block text-sm font-bold">
+          公式情報リンク（任意）
+        </label>
         <input
           id="new-event-official-url"
           name="official_url"
@@ -200,12 +218,14 @@ export function NewEventForm() {
           value={officialUrl}
           disabled={pending}
           onChange={(event) => setOfficialUrl(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-event-ticket-url">チケットリンク（任意）</label>
-        <br />
+        <label htmlFor="new-event-ticket-url" className="block text-sm font-bold">
+          チケットリンク（任意）
+        </label>
         <input
           id="new-event-ticket-url"
           name="ticket_url"
@@ -214,16 +234,17 @@ export function NewEventForm() {
           value={ticketUrl}
           disabled={pending}
           onChange={(event) => setTicketUrl(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       {error ? (
-        <p role="alert" aria-live="polite">
+        <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
         </p>
       ) : null}
 
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
         {pending ? "保存中..." : "下書きとして保存"}
       </button>
     </form>

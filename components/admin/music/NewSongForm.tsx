@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
+
 const TITLE_MAX_LENGTH = 100; // UX hint only; internal.normalize_song_content() is authoritative.
 const DESCRIPTION_MAX_LENGTH = 5000; // same.
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -161,10 +166,11 @@ export function NewSongForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <div>
-        <label htmlFor="new-song-title">タイトル</label>
-        <br />
+        <label htmlFor="new-song-title" className="block text-sm font-bold">
+          タイトル
+        </label>
         <input
           id="new-song-title"
           name="title"
@@ -174,12 +180,14 @@ export function NewSongForm() {
           value={title}
           disabled={pending}
           onChange={(event) => setTitle(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-song-release-date">発売日（任意）</label>
-        <br />
+        <label htmlFor="new-song-release-date" className="block text-sm font-bold">
+          発売日（任意）
+        </label>
         <input
           id="new-song-release-date"
           name="release_date"
@@ -187,25 +195,30 @@ export function NewSongForm() {
           value={releaseDate}
           disabled={pending}
           onChange={(event) => setReleaseDate(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-song-description">説明文（任意）</label>
-        <br />
+        <label htmlFor="new-song-description" className="block text-sm font-bold">
+          説明文（任意）
+        </label>
         <textarea
           id="new-song-description"
           name="description"
+          rows={5}
           maxLength={DESCRIPTION_MAX_LENGTH}
           value={description}
           disabled={pending}
           onChange={(event) => setDescription(event.target.value)}
+          className={INPUT_CLASS}
         />
       </div>
 
       <div>
-        <label htmlFor="new-song-cover">カバー画像（任意。JPEG・PNG・WebP、5MB以下）</label>
-        <br />
+        <label htmlFor="new-song-cover" className="block text-sm font-bold">
+          カバー画像（任意。JPEG・PNG・WebP、5MB以下）
+        </label>
         <input
           id="new-song-cover"
           name="file"
@@ -214,21 +227,28 @@ export function NewSongForm() {
           ref={fileInputRef}
           disabled={pending}
           onChange={handleFileChange}
+          className="mt-1 block w-full text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-bold file:text-brand-foreground"
         />
       </div>
 
       {previewUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={previewUrl} alt="選択したカバー画像のプレビュー" width={160} height={160} />
+        <img
+          src={previewUrl}
+          alt="選択したカバー画像のプレビュー"
+          width={160}
+          height={160}
+          className="rounded-xl border border-border object-cover"
+        />
       ) : null}
 
       {error ? (
-        <p role="alert" aria-live="polite">
+        <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
         </p>
       ) : null}
 
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
         {pending ? "保存中..." : "下書きとして保存"}
       </button>
     </form>

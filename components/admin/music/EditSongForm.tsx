@@ -3,6 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
+import { buttonClassName } from "@/components/ui/Button";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
+
 const TITLE_MAX_LENGTH = 100; // UX hint only; internal.normalize_song_content() is authoritative.
 const DESCRIPTION_MAX_LENGTH = 5000; // same.
 const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -343,26 +348,36 @@ export function EditSongForm({
   const hasCurrentCover = initialCoverImageKey !== null;
 
   return (
-    <div>
-      <p>
-        現在の公開状態: <strong>{statusLabel(status)}</strong>
+    <div className="flex flex-col gap-6">
+      <p className="text-sm text-muted">
+        現在の公開状態: <strong className="text-foreground">{statusLabel(status)}</strong>
       </p>
 
       <section>
-        <h2>公開状態の操作</h2>
+        <h2 className="text-lg font-bold">公開状態の操作</h2>
         {status === "draft" ? (
-          <button type="button" disabled={pending} onClick={() => handleStatusChange("public")}>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => handleStatusChange("public")}
+            className={buttonClassName("primary", "mt-3")}
+          >
             公開する
           </button>
         ) : (
-          <button type="button" disabled={pending} onClick={() => handleStatusChange("draft")}>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => handleStatusChange("draft")}
+            className={buttonClassName("secondary", "mt-3")}
+          >
             下書きに戻す
           </button>
         )}
       </section>
 
       <section>
-        <h2>現在のカバー画像</h2>
+        <h2 className="text-lg font-bold">現在のカバー画像</h2>
         {initialCoverImageUrl && !coverLoadFailed ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -371,16 +386,18 @@ export function EditSongForm({
             width={160}
             height={160}
             onError={() => setCoverLoadFailed(true)}
+            className="mt-3 rounded-xl border border-border object-cover"
           />
         ) : (
-          <p>画像は設定されていません。</p>
+          <p className="mt-3 text-sm text-muted">画像は設定されていません。</p>
         )}
       </section>
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
         <div>
-          <label htmlFor="edit-song-title">タイトル</label>
-          <br />
+          <label htmlFor="edit-song-title" className="block text-sm font-bold">
+            タイトル
+          </label>
           <input
             id="edit-song-title"
             name="title"
@@ -390,12 +407,14 @@ export function EditSongForm({
             value={title}
             disabled={pending}
             onChange={(event) => setTitle(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-song-release-date">発売日（任意）</label>
-          <br />
+          <label htmlFor="edit-song-release-date" className="block text-sm font-bold">
+            発売日（任意）
+          </label>
           <input
             id="edit-song-release-date"
             name="release_date"
@@ -403,49 +422,51 @@ export function EditSongForm({
             value={releaseDate}
             disabled={pending}
             onChange={(event) => setReleaseDate(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
         <div>
-          <label htmlFor="edit-song-description">説明文（任意）</label>
-          <br />
+          <label htmlFor="edit-song-description" className="block text-sm font-bold">
+            説明文（任意）
+          </label>
           <textarea
             id="edit-song-description"
             name="description"
+            rows={5}
             maxLength={DESCRIPTION_MAX_LENGTH}
             value={description}
             disabled={pending}
             onChange={(event) => setDescription(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
 
-        <fieldset disabled={pending}>
-          <legend>カバー画像の操作</legend>
-          <label>
-            <input
-              type="radio"
-              name="cover-action-ui"
-              value="keep"
-              checked={coverAction === "keep"}
-              onChange={() => handleCoverActionChange("keep")}
-            />
-            現在の画像を維持
-          </label>
-          <br />
-          <label>
-            <input
-              type="radio"
-              name="cover-action-ui"
-              value="replace"
-              checked={coverAction === "replace"}
-              onChange={() => handleCoverActionChange("replace")}
-            />
-            画像を差し替える
-          </label>
-          {hasCurrentCover ? (
-            <>
-              <br />
-              <label>
+        <fieldset disabled={pending} className="rounded-xl border border-border p-4">
+          <legend className="px-1 text-sm font-bold">カバー画像の操作</legend>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="cover-action-ui"
+                value="keep"
+                checked={coverAction === "keep"}
+                onChange={() => handleCoverActionChange("keep")}
+              />
+              現在の画像を維持
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="cover-action-ui"
+                value="replace"
+                checked={coverAction === "replace"}
+                onChange={() => handleCoverActionChange("replace")}
+              />
+              画像を差し替える
+            </label>
+            {hasCurrentCover ? (
+              <label className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="cover-action-ui"
@@ -455,15 +476,14 @@ export function EditSongForm({
                 />
                 画像を削除
               </label>
-            </>
-          ) : null}
+            ) : null}
+          </div>
 
           {coverAction === "replace" ? (
-            <div>
-              <label htmlFor="edit-song-cover-file">
+            <div className="mt-3">
+              <label htmlFor="edit-song-cover-file" className="block text-sm font-bold">
                 新しい画像（JPEG・PNG・WebP、5MB以下）
               </label>
-              <br />
               <input
                 id="edit-song-cover-file"
                 name="file"
@@ -472,6 +492,7 @@ export function EditSongForm({
                 ref={fileInputRef}
                 disabled={pending}
                 onChange={handleFileChange}
+                className="mt-1 block w-full text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-brand file:px-4 file:py-2 file:text-sm file:font-bold file:text-brand-foreground"
               />
               {newFilePreviewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -480,6 +501,7 @@ export function EditSongForm({
                   alt="新しいカバー画像のプレビュー"
                   width={160}
                   height={160}
+                  className="mt-2 rounded-xl border border-border object-cover"
                 />
               ) : null}
             </div>
@@ -487,26 +509,26 @@ export function EditSongForm({
         </fieldset>
 
         {conflict ? (
-          <div role="alert" aria-live="polite">
+          <div role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
             <p>
               別の操作で更新されています。最新内容を読み込み直してください。
               （未保存の変更は失われます）
             </p>
-            <button type="button" onClick={handleReloadAfterConflict}>
+            <button type="button" onClick={handleReloadAfterConflict} className={buttonClassName("secondary", "mt-2")}>
               最新内容を再読み込み
             </button>
           </div>
         ) : null}
 
         {error ? (
-          <p role="alert" aria-live="polite">
+          <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
             {error}
           </p>
         ) : null}
 
-        {successMessage ? <p aria-live="polite">{successMessage}</p> : null}
+        {successMessage ? <p aria-live="polite" className="text-sm text-brand">{successMessage}</p> : null}
 
-        <button type="submit" disabled={pending}>
+        <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
           {pending ? "保存中..." : "変更を保存"}
         </button>
       </form>

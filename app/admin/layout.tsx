@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { AdminHeader } from "@/components/admin/AdminHeader";
 import { requireActiveAdmin } from "@/lib/admin/authorize";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -33,12 +34,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     }
 
     return (
-      <main>
-        <h1>アクセス権限がありません</h1>
-        <p>この画面は管理者のみ利用できます。</p>
+      <main className="mx-auto max-w-md px-4 py-16 text-center sm:py-24">
+        <h1 className="text-xl font-bold">アクセス権限がありません</h1>
+        <p className="mt-2 text-sm text-muted">この画面は管理者のみ利用できます。</p>
       </main>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <div className="flex min-h-full flex-col">
+      <AdminHeader />
+      {children}
+    </div>
+  );
 }

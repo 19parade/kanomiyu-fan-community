@@ -3,6 +3,18 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Card } from "@/components/ui/Card";
+import { buttonClassName } from "@/components/ui/Button";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
+
+function statusBadgeClass(status: string): string {
+  if (status === "public") return "bg-brand/15 text-brand";
+  if (status === "cancelled") return "bg-rose-100 text-rose-700";
+  return "bg-foreground/5 text-muted";
+}
+
 export type AdminEventRow = {
   id: string;
   title: string;
@@ -164,11 +176,12 @@ export function EventsAdminList({
   const isFilterActive = searchInput !== "" || statusFilter !== "all";
 
   return (
-    <div>
-      <div>
-        <div>
-          <label htmlFor="events-admin-search">LIVE名称・会場で検索</label>
-          <br />
+    <div className="mt-6">
+      <div className="flex flex-wrap gap-4">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="events-admin-search" className="block text-sm font-bold">
+            LIVE名称・会場で検索
+          </label>
           <input
             id="events-admin-search"
             name="search"
@@ -177,17 +190,20 @@ export function EventsAdminList({
             value={searchInput}
             disabled={loading}
             onChange={(event) => setSearchInput(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
         <div>
-          <label htmlFor="events-admin-status">公開状態</label>
-          <br />
+          <label htmlFor="events-admin-status" className="block text-sm font-bold">
+            公開状態
+          </label>
           <select
             id="events-admin-status"
             name="status"
             value={statusFilter}
             disabled={loading}
             onChange={(event) => setStatusFilter(event.target.value as StatusFilterValue)}
+            className={INPUT_CLASS}
           >
             <option value="all">すべて</option>
             <option value="draft">下書き</option>
@@ -197,54 +213,71 @@ export function EventsAdminList({
         </div>
       </div>
 
-      {loading ? <p aria-live="polite">読み込み中...</p> : null}
+      {loading ? (
+        <p aria-live="polite" className="mt-4 text-sm text-muted">
+          読み込み中...
+        </p>
+      ) : null}
 
       {error ? (
-        <div role="alert" aria-live="polite">
+        <div role="alert" aria-live="polite" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           <p>{error}</p>
-          <button type="button" onClick={handleRetry} disabled={loading}>
+          <button type="button" onClick={handleRetry} disabled={loading} className={buttonClassName("secondary", "mt-2")}>
             再試行
           </button>
         </div>
       ) : null}
 
       {!loading && !error && events.length === 0 ? (
-        <p>{isFilterActive ? "条件に一致するLIVEはありません。" : "LIVEはまだ登録されていません。"}</p>
+        <p className="mt-4 text-sm text-muted">
+          {isFilterActive ? "条件に一致するLIVEはありません。" : "LIVEはまだ登録されていません。"}
+        </p>
       ) : null}
 
       {events.length > 0 ? (
-        <div style={{ overflowX: "auto" }}>
-          <table>
+        <Card className="mt-4 overflow-x-auto p-0">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
-              <tr>
-                <th scope="col">タイトル</th>
-                <th scope="col">会場</th>
-                <th scope="col">開催日時</th>
-                <th scope="col">ステータス</th>
-                <th scope="col">更新日時</th>
-                <th scope="col">操作</th>
+              <tr className="border-b border-border text-left text-muted">
+                <th scope="col" className="px-4 py-3 font-bold">タイトル</th>
+                <th scope="col" className="px-4 py-3 font-bold">会場</th>
+                <th scope="col" className="px-4 py-3 font-bold">開催日時</th>
+                <th scope="col" className="px-4 py-3 font-bold">ステータス</th>
+                <th scope="col" className="px-4 py-3 font-bold">更新日時</th>
+                <th scope="col" className="px-4 py-3 font-bold">操作</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {events.map((event) => (
                 <tr key={event.id}>
-                  <td>{event.title}</td>
-                  <td>{event.venue}</td>
-                  <td>{formatDateTime(event.event_date)}</td>
-                  <td>{statusLabel(event.status)}</td>
-                  <td>{formatDateTime(event.updated_at)}</td>
-                  <td>
-                    <Link href={`/admin/events/${event.id}`}>編集</Link>
+                  <td className="px-4 py-3">{event.title}</td>
+                  <td className="px-4 py-3">{event.venue}</td>
+                  <td className="px-4 py-3">{formatDateTime(event.event_date)}</td>
+                  <td className="px-4 py-3">
+                    <span className={["inline-block rounded-full px-2 py-0.5 text-xs font-bold", statusBadgeClass(event.status)].join(" ")}>
+                      {statusLabel(event.status)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted">{formatDateTime(event.updated_at)}</td>
+                  <td className="px-4 py-3">
+                    <Link href={`/admin/events/${event.id}`} className="font-bold text-brand underline-offset-2 hover:underline">
+                      編集
+                    </Link>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       ) : null}
 
       {hasMore ? (
-        <button type="button" onClick={handleLoadMore} disabled={loading || loadingMore}>
+        <button
+          type="button"
+          onClick={handleLoadMore}
+          disabled={loading || loadingMore}
+          className={buttonClassName("secondary", "mt-4 w-full sm:w-auto")}
+        >
           {loadingMore ? "読み込み中..." : "さらに読み込む"}
         </button>
       ) : null}

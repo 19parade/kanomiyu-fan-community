@@ -53,9 +53,11 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   if (error) {
     console.error("edit event page: get_admin_event failed", error.message);
     return (
-      <main>
-        <h1>LIVEを編集</h1>
-        <p role="alert">LIVE情報の取得に失敗しました。</p>
+      <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+        <h1 className="text-2xl font-bold sm:text-3xl">LIVEを編集</h1>
+        <p role="alert" className="mt-4 text-red-600">
+          LIVE情報の取得に失敗しました。
+        </p>
       </main>
     );
   }
@@ -67,28 +69,32 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
   }
 
   return (
-    <main>
-      <p>
-        <Link href="/admin/events">← LIVE一覧へ戻る</Link>
+    <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <p className="mb-4">
+        <Link href="/admin/events" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+          ← LIVE一覧へ戻る
+        </Link>
       </p>
-      <h1>LIVEを編集</h1>
-      <EditEventForm
-        key={event.updated_at}
-        eventId={event.id}
-        initialTitle={event.title}
-        initialVenue={event.venue}
-        initialEventDate={event.event_date}
-        initialDoorsTime={event.doors_time}
-        initialStartTime={event.start_time}
-        initialDescription={event.description}
-        initialImageKey={event.image_url}
-        initialImageDisplayUrl={getEventImagePublicUrl(supabase, event.image_url)}
-        initialTicketUrl={event.ticket_url}
-        initialOfficialUrl={event.official_url}
-        initialStatus={event.status}
-        initialFirstPublishedAt={event.first_published_at}
-        initialUpdatedAt={event.updated_at}
-      />
+      <h1 className="text-2xl font-bold sm:text-3xl">LIVEを編集</h1>
+      <div className="mt-6">
+        <EditEventForm
+          key={event.updated_at}
+          eventId={event.id}
+          initialTitle={event.title}
+          initialVenue={event.venue}
+          initialEventDate={event.event_date}
+          initialDoorsTime={event.doors_time}
+          initialStartTime={event.start_time}
+          initialDescription={event.description}
+          initialImageKey={event.image_url}
+          initialImageDisplayUrl={getEventImagePublicUrl(supabase, event.image_url)}
+          initialTicketUrl={event.ticket_url}
+          initialOfficialUrl={event.official_url}
+          initialStatus={event.status}
+          initialFirstPublishedAt={event.first_published_at}
+          initialUpdatedAt={event.updated_at}
+        />
+      </div>
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { EventsAdminList, type AdminEventRow } from "@/components/admin/events/EventsAdminList";
+import { buttonClassName } from "@/components/ui/Button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const INITIAL_PAGE_SIZE = 20;
@@ -30,9 +31,11 @@ export default async function AdminEventsPage() {
   if (error) {
     console.error("admin events page: initial get_admin_events failed", error.message);
     return (
-      <main>
-        <h1>LIVE管理</h1>
-        <p role="alert">LIVE一覧の取得に失敗しました。</p>
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <h1 className="text-2xl font-bold sm:text-3xl">LIVE管理</h1>
+        <p role="alert" className="mt-4 text-red-600">
+          LIVE一覧の取得に失敗しました。
+        </p>
       </main>
     );
   }
@@ -40,12 +43,16 @@ export default async function AdminEventsPage() {
   const events = (data ?? []) as AdminEventRow[];
 
   return (
-    <main>
-      <h1>LIVE管理</h1>
-      <p>LIVEの一覧を確認できます。</p>
-      <p>
-        <Link href="/admin/events/new">LIVEを追加</Link>
-      </p>
+    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold sm:text-3xl">LIVE管理</h1>
+          <p className="mt-2 text-sm text-muted">LIVEの一覧を確認できます。</p>
+        </div>
+        <Link href="/admin/events/new" className={buttonClassName("primary", "w-full sm:w-auto")}>
+          LIVEを追加
+        </Link>
+      </div>
       <EventsAdminList initialEvents={events} initialHasMore={events.length === INITIAL_PAGE_SIZE} />
     </main>
   );

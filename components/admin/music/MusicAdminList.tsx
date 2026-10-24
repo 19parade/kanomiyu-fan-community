@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Card } from "@/components/ui/Card";
+import { buttonClassName } from "@/components/ui/Button";
+
+const INPUT_CLASS =
+  "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
+
 export type AdminSongRow = {
   id: string;
   title: string;
@@ -173,11 +179,12 @@ export function MusicAdminList({
   const isFilterActive = searchInput !== "" || statusFilter !== "all";
 
   return (
-    <div>
-      <div>
-        <div>
-          <label htmlFor="music-admin-search">楽曲タイトルを検索</label>
-          <br />
+    <div className="mt-6">
+      <div className="flex flex-wrap gap-4">
+        <div className="min-w-0 flex-1">
+          <label htmlFor="music-admin-search" className="block text-sm font-bold">
+            楽曲タイトルを検索
+          </label>
           <input
             id="music-admin-search"
             name="search"
@@ -186,17 +193,20 @@ export function MusicAdminList({
             value={searchInput}
             disabled={loading}
             onChange={(event) => setSearchInput(event.target.value)}
+            className={INPUT_CLASS}
           />
         </div>
         <div>
-          <label htmlFor="music-admin-status">公開状態</label>
-          <br />
+          <label htmlFor="music-admin-status" className="block text-sm font-bold">
+            公開状態
+          </label>
           <select
             id="music-admin-status"
             name="status"
             value={statusFilter}
             disabled={loading}
             onChange={(event) => setStatusFilter(event.target.value as StatusFilterValue)}
+            className={INPUT_CLASS}
           >
             <option value="all">すべて</option>
             <option value="draft">下書き</option>
@@ -205,52 +215,74 @@ export function MusicAdminList({
         </div>
       </div>
 
-      {loading ? <p aria-live="polite">読み込み中...</p> : null}
+      {loading ? (
+        <p aria-live="polite" className="mt-4 text-sm text-muted">
+          読み込み中...
+        </p>
+      ) : null}
 
       {error ? (
-        <div role="alert" aria-live="polite">
+        <div role="alert" aria-live="polite" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           <p>{error}</p>
-          <button type="button" onClick={handleRetry} disabled={loading}>
+          <button type="button" onClick={handleRetry} disabled={loading} className={buttonClassName("secondary", "mt-2")}>
             再試行
           </button>
         </div>
       ) : null}
 
       {!loading && !error && songs.length === 0 ? (
-        <p>{isFilterActive ? "条件に一致する楽曲はありません。" : "楽曲はまだ登録されていません。"}</p>
+        <p className="mt-4 text-sm text-muted">
+          {isFilterActive ? "条件に一致する楽曲はありません。" : "楽曲はまだ登録されていません。"}
+        </p>
       ) : null}
 
       {songs.length > 0 ? (
-        <div style={{ overflowX: "auto" }}>
-          <table>
+        <Card className="mt-4 overflow-x-auto p-0">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
-              <tr>
-                <th scope="col">タイトル</th>
-                <th scope="col">発売日</th>
-                <th scope="col">ステータス</th>
-                <th scope="col">更新日時</th>
-                <th scope="col">操作</th>
+              <tr className="border-b border-border text-left text-muted">
+                <th scope="col" className="px-4 py-3 font-bold">タイトル</th>
+                <th scope="col" className="px-4 py-3 font-bold">発売日</th>
+                <th scope="col" className="px-4 py-3 font-bold">ステータス</th>
+                <th scope="col" className="px-4 py-3 font-bold">更新日時</th>
+                <th scope="col" className="px-4 py-3 font-bold">操作</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border">
               {songs.map((song) => (
                 <tr key={song.id}>
-                  <td>{song.title}</td>
-                  <td>{song.release_date ?? "未設定"}</td>
-                  <td>{statusLabel(song.status)}</td>
-                  <td>{formatUpdatedAt(song.updated_at)}</td>
-                  <td>
-                    <Link href={`/admin/music/${song.id}`}>編集</Link>
+                  <td className="px-4 py-3">{song.title}</td>
+                  <td className="px-4 py-3">{song.release_date ?? "未設定"}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={[
+                        "inline-block rounded-full px-2 py-0.5 text-xs font-bold",
+                        song.status === "public" ? "bg-brand/15 text-brand" : "bg-foreground/5 text-muted",
+                      ].join(" ")}
+                    >
+                      {statusLabel(song.status)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted">{formatUpdatedAt(song.updated_at)}</td>
+                  <td className="px-4 py-3">
+                    <Link href={`/admin/music/${song.id}`} className="font-bold text-brand underline-offset-2 hover:underline">
+                      編集
+                    </Link>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       ) : null}
 
       {hasMore ? (
-        <button type="button" onClick={handleLoadMore} disabled={loading || loadingMore}>
+        <button
+          type="button"
+          onClick={handleLoadMore}
+          disabled={loading || loadingMore}
+          className={buttonClassName("secondary", "mt-4 w-full sm:w-auto")}
+        >
           {loadingMore ? "読み込み中..." : "さらに読み込む"}
         </button>
       ) : null}

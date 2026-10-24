@@ -61,9 +61,11 @@ export default async function EditSongPage({ params }: { params: Promise<{ id: s
     // Never surface the raw DB error message to the browser.
     console.error("edit song page: get_admin_song failed", error.message);
     return (
-      <main>
-        <h1>楽曲を編集</h1>
-        <p role="alert">楽曲情報の取得に失敗しました。</p>
+      <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+        <h1 className="text-2xl font-bold sm:text-3xl">楽曲を編集</h1>
+        <p role="alert" className="mt-4 text-red-600">
+          楽曲情報の取得に失敗しました。
+        </p>
       </main>
     );
   }
@@ -77,22 +79,26 @@ export default async function EditSongPage({ params }: { params: Promise<{ id: s
   const coverImageUrl = getSongImagePublicUrl(supabase, song.cover_image_url);
 
   return (
-    <main>
-      <p>
-        <Link href="/admin/music">← 楽曲一覧へ戻る</Link>
+    <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <p className="mb-4">
+        <Link href="/admin/music" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
+          ← 楽曲一覧へ戻る
+        </Link>
       </p>
-      <h1>楽曲を編集</h1>
-      <EditSongForm
-        key={song.updated_at}
-        songId={song.id}
-        initialTitle={song.title}
-        initialReleaseDate={song.release_date}
-        initialDescription={song.description}
-        initialCoverImageKey={song.cover_image_url}
-        initialCoverImageUrl={coverImageUrl}
-        initialStatus={song.status}
-        initialUpdatedAt={song.updated_at}
-      />
+      <h1 className="text-2xl font-bold sm:text-3xl">楽曲を編集</h1>
+      <div className="mt-6">
+        <EditSongForm
+          key={song.updated_at}
+          songId={song.id}
+          initialTitle={song.title}
+          initialReleaseDate={song.release_date}
+          initialDescription={song.description}
+          initialCoverImageKey={song.cover_image_url}
+          initialCoverImageUrl={coverImageUrl}
+          initialStatus={song.status}
+          initialUpdatedAt={song.updated_at}
+        />
+      </div>
     </main>
   );
 }
