@@ -11,8 +11,10 @@ import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
 import { resolveMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
+import { SITE_URL } from "@/lib/legal/site-info";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
 import type { PublicPostListItem } from "@/lib/posts/types";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const LIVE_BOARD_PAGE_SIZE = 20;
@@ -122,13 +124,22 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
-  const { event } = await fetchPublicEvent(supabase, id);
+  const { event, imageUrl } = await fetchPublicEvent(supabase, id);
 
   if (!event) {
     return { title: "LIVEが見つかりません" };
   }
 
-  return { title: event.title };
+  const description =
+    event.description?.slice(0, 120) ??
+    `${event.title}（${event.venue}）のLIVE情報です。`;
+
+  return buildPageMetadata({
+    title: event.title,
+    description,
+    path: `/live/${event.id}`,
+    image: imageUrl,
+  });
 }
 
 /**
@@ -187,8 +198,42 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const startTimeText = formatEventDateTime(event.start_time);
   const boardResult = await fetchLiveBoardPosts(supabase, event.id);
 
+  // MusicEvent JSON-LD: restates the exact same facts already shown on this
+  // page (title/venue/date/ticket link) in schema.org form, for SEO rich
+  // results and AI answer engines. Never adds data the page doesn't already
+  // publicly display.
+  const eventJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "MusicEvent",
+    name: event.title,
+    url: `${SITE_URL}/live/${event.id}`,
+    startDate: event.start_time ?? event.event_date,
+    eventStatus:
+      event.status === "cancelled"
+        ? "https://schema.org/EventCancelled"
+        : "https://schema.org/EventScheduled",
+    location: {
+      "@type": "Place",
+      name: event.venue,
+    },
+    performer: {
+      "@type": "Person",
+      name: "かのうみゆ",
+    },
+    ...(imageUrl ? { image: [imageUrl] } : {}),
+    ...(event.description ? { description: event.description } : {}),
+    ...(event.ticket_url
+      ? { offers: { "@type": "Offer", url: event.ticket_url, availability: "https://schema.org/InStock" } }
+      : {}),
+  };
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <script
+        type="application/ld+json"
+        // Built entirely from this page's own already-public event fields — no user input.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(eventJsonLd) }}
+      />
       <p className="mb-4">
         <Link href="/live" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
           ← LIVE一覧へ戻る

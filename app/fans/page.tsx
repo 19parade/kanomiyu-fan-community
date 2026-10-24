@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 
 import { FansList, type PublicFanCard } from "@/components/fans/FansList";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const INITIAL_PAGE_SIZE = 20;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "ファン一覧",
-  description: "かのうみゆさんのファンの一覧です。",
-};
+  description: "かのうみゆさんのファンの一覧です。会員プロフィールから、他のファンとつながれます。",
+  path: "/fans",
+});
 
 // The exact 6 columns get_public_profiles() returns (F4 audit) — never
 // widened. No email, role, status, or consent info is ever selected.

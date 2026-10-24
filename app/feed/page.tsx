@@ -6,14 +6,16 @@ import { buttonClassName } from "@/components/ui/Button";
 import { resolveMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const INITIAL_PAGE_SIZE = 20;
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "投稿一覧",
-  description: "かのうみゆさんのファンによる投稿の一覧です。",
-};
+  description: "かのうみゆさんのファンによる投稿の一覧です。感想や応援コメントをファン同士で共有できます。",
+  path: "/feed",
+});
 
 /**
  * /feed — public post feed (F5-D1). Server Component: fetches the first

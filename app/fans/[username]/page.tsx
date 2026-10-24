@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { AvatarInitial } from "@/components/ui/AvatarInitial";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Matches the DB's actually-enforced constraint
@@ -82,7 +83,10 @@ export async function generateMetadata({
     return { title: "ファンが見つかりません" };
   }
 
-  return { title: result.profile.display_name };
+  const title = result.profile.display_name;
+  const description = result.profile.bio?.slice(0, 120) ?? `${title}さんのファンプロフィールです。`;
+
+  return buildPageMetadata({ title, description, path: `/fans/${result.profile.username}` });
 }
 
 // profiles.status can change between requests (e.g. banned after being

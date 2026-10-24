@@ -4,12 +4,14 @@ import Link from "next/link";
 import { EventImage } from "@/components/live/EventImage";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "LIVE",
-  description: "かのうみゆさんのLIVE情報一覧です。",
-};
+  description: "かのうみゆさんのLIVE情報一覧です。開催予定・開催終了のLIVEスケジュールや会場情報を掲載しています。",
+  path: "/live",
+});
 
 // The exact 11 public columns events grants anon/authenticated column-level
 // SELECT on (see supabase/migrations/20260927200000_events_public_columns.sql

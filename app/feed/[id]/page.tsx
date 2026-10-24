@@ -15,6 +15,7 @@ import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
 import { COMMENT_LIST_SELECT_COLUMNS, mapCommentListRow, type CommentListRow } from "@/lib/posts/mapRows";
 import type { PublicComment, PublicPostAuthor, PublicPostDetail } from "@/lib/posts/types";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // Matches the actually-enforced posts.id / comments.post_id shape (uuid) —
@@ -175,7 +176,10 @@ export async function generateMetadata({
   }
 
   const authorLabel = result.post.author?.display_name ?? "会員";
-  return { title: `${authorLabel}さんの投稿` };
+  const title = `${authorLabel}さんの投稿`;
+  const description = result.post.content.slice(0, 120);
+
+  return buildPageMetadata({ title, description, path: `/feed/${id}` });
 }
 
 // profiles.status / blocks can change between requests, and results depend

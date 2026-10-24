@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -5,7 +6,14 @@ import { Card } from "@/components/ui/Card";
 import { buttonClassName } from "@/components/ui/Button";
 import { OPERATOR_NAME, SITE_NAME, UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 import { resolveMemberAccess } from "@/lib/member/access";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+export const metadata: Metadata = buildPageMetadata({
+  description:
+    "かのうみゆさんのLIVE情報・楽曲情報をまとめた非公式ファンコミュニティ。LIVEの参加表明やレポート共有、ファン同士の投稿・交流ができます。",
+  path: "/",
+});
 
 /**
  * Top page (D2, bug-fix pass 2026-10-22). The hero CTA row used to always

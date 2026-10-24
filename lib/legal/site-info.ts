@@ -1,4 +1,5 @@
 export const SITE_NAME = "かのうみゆファンコミュニティ";
+export const SITE_URL = "https://kanomiyu-fan.jp";
 export const OPERATOR_NAME = "パレード";
 export const OPERATOR_TYPE = "個人運営";
 export const CONTACT_EMAIL = "direngreyyokan@gmail.com";

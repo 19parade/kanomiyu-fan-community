@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { SongCoverImage } from "@/components/music/SongCoverImage";
+import { SITE_URL } from "@/lib/legal/site-info";
+import { buildPageMetadata } from "@/lib/seo/metadata";
 import { getSongImagePublicUrl } from "@/lib/song-images/public-url";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -66,7 +68,16 @@ export async function generateMetadata({
     return { title: "楽曲が見つかりません" };
   }
 
-  return { title: song.title };
+  const supabase = await createSupabaseServerClient();
+  const coverImageUrl = getSongImagePublicUrl(supabase, song.cover_image_url);
+  const description = song.description?.slice(0, 120) ?? `かのうみゆさんの楽曲「${song.title}」の情報です。`;
+
+  return buildPageMetadata({
+    title: song.title,
+    description,
+    path: `/music/${song.id}`,
+    image: coverImageUrl,
+  });
 }
 
 /**
@@ -109,8 +120,29 @@ export default async function SongDetailPage({ params }: { params: Promise<{ id:
   const supabase = await createSupabaseServerClient();
   const coverImageUrl = getSongImagePublicUrl(supabase, song.cover_image_url);
 
+  // MusicRecording JSON-LD: restates the same facts already shown on this
+  // page (title/release date/cover image) in schema.org form.
+  const songJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "MusicRecording",
+    name: song.title,
+    url: `${SITE_URL}/music/${song.id}`,
+    byArtist: {
+      "@type": "Person",
+      name: "かのうみゆ",
+    },
+    ...(song.release_date ? { datePublished: song.release_date } : {}),
+    ...(coverImageUrl ? { image: [coverImageUrl] } : {}),
+    ...(song.description ? { description: song.description } : {}),
+  };
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+      <script
+        type="application/ld+json"
+        // Built entirely from this page's own already-public song fields — no user input.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(songJsonLd) }}
+      />
       <p className="mb-4">
         <Link href="/music" className="text-sm font-bold text-brand underline-offset-2 hover:underline">
           ← 楽曲一覧へ戻る
