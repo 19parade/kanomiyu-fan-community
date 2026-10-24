@@ -3,8 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { EventImage } from "@/components/live/EventImage";
+import { ParticipationStatus } from "@/components/live/ParticipationStatus";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
+import { resolveMemberAccess } from "@/lib/member/access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -35,12 +37,14 @@ type PublicEventDetail = {
  * are all indistinguishable — zero rows (PROJECT_SPEC.md 6.5's own stated
  * design for events_select_public).
  */
-async function fetchPublicEvent(id: string): Promise<{ event: PublicEventDetail | null; imageUrl: string | null }> {
+async function fetchPublicEvent(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  id: string
+): Promise<{ event: PublicEventDetail | null; imageUrl: string | null }> {
   if (!UUID_SHAPE.test(id)) {
     return { event: null, imageUrl: null };
   }
 
-  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("events")
     .select(PUBLIC_EVENT_COLUMNS)
@@ -63,7 +67,8 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const { event } = await fetchPublicEvent(id);
+  const supabase = await createSupabaseServerClient();
+  const { event } = await fetchPublicEvent(supabase, id);
 
   if (!event) {
     return { title: "LIVEが見つかりません" };
@@ -83,15 +88,40 @@ export async function generateMetadata({
  * per events_select_public once first_published_at is set — PM方針「公開を
  * 継続し、画面上に開催中止と明示する」) rather than treated as not-found.
  *
- * Does not render a 掲示板/参加ステータス tab — out of scope for Phase 1
- * (Phase 2・3 of this feature).
+ * Does not render a 掲示板 tab — out of scope for this phase (Phase 3).
+ * Participation status (LIVE機能 Phase 2) is rendered below via
+ * components/live/ParticipationStatus.tsx, a Client Component — this page
+ * itself stays a Server Component and only does the read-only own-row fetch
+ * (event_participants_select_own) needed to seed its initial state.
  */
 export default async function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { event, imageUrl } = await fetchPublicEvent(id);
+  const supabase = await createSupabaseServerClient();
+  const { event, imageUrl } = await fetchPublicEvent(supabase, id);
 
   if (!event) {
     notFound();
+  }
+
+  const access = await resolveMemberAccess(supabase);
+  const isLoggedIn = access.kind !== "unauthenticated";
+
+  let initialParticipation: { status: "going" | "attended" | "cancelled" } | null = null;
+  if (access.kind === "member_active" || access.kind === "admin_active") {
+    const { data: participationRow, error: participationError } = await supabase
+      .from("event_participants")
+      .select("status")
+      .eq("event_id", id)
+      .eq("user_id", access.userId)
+      .maybeSingle();
+
+    if (participationError) {
+      // Never block the rest of the page on this — the widget below simply
+      // starts from "未選択" and the user can still read/retry via the API.
+      console.error("live detail: own participation row fetch failed", participationError.message);
+    } else if (participationRow) {
+      initialParticipation = { status: participationRow.status as "going" | "attended" | "cancelled" };
+    }
   }
 
   const doorsTimeText = formatEventDateTime(event.doors_time);
@@ -164,6 +194,14 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           </a>
         ) : null}
       </div>
+
+      <ParticipationStatus
+        eventId={event.id}
+        eventStatus={event.status as "public" | "cancelled"}
+        eventDate={event.event_date}
+        initialParticipation={initialParticipation}
+        isLoggedIn={isLoggedIn}
+      />
     </main>
   );
 }
