@@ -140,6 +140,15 @@ export async function proxy(request: NextRequest) {
   // its original paths so turning maintenance mode off later doesn't
   // silently add a Supabase round-trip to every page load.
   const pathname = new URL(request.url).pathname;
+
+  // Mirrors the incoming pathname onto the request so app/layout.tsx (a
+  // Server Component with no router access of its own) can read it via
+  // `headers()` and decide whether to render the Google Tag Manager tags —
+  // every public page, but never /admin/*. Mutating `request.headers` in
+  // place and forwarding the same `request` is the same technique already
+  // used below for the Supabase cookie refresh.
+  request.headers.set("x-pathname", pathname);
+
   const needsSessionRefresh =
     pathname === "/login" ||
     pathname === "/me" ||
@@ -147,7 +156,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/admin/") ||
     pathname === "/admin";
   if (!needsSessionRefresh) {
-    return NextResponse.next();
+    return NextResponse.next({ request });
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
