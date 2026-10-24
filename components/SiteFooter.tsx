@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { ContactLink } from "@/components/legal/LegalPage";
 import { LEGAL_PAGES, UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 
 export function SiteFooter() {
@@ -20,7 +19,14 @@ export function SiteFooter() {
           </ul>
         </nav>
         <p className="mt-2">
-          お問い合わせ：<ContactLink />
+          <a
+            href="https://forms.gle/2Zchq7zZAckms1bq6"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            お問い合わせ
+          </a>
         </p>
         <p className="mt-2 text-xs">
           上記の規約・ポリシー等は開発用のドラフトであり、正式に施行されたものではありません。
