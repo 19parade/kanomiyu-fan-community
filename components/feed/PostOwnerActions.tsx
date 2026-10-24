@@ -25,8 +25,25 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
  * and only treats `status === 'deleted'` as real success — the same
  * "don't trust silence" principle components/me/ProfileEditForm.tsx
  * applies to its own UPDATE result.
+ *
+ * LIVE機能 Phase 4-B: `hasImages` picks which delete path runs. A
+ * text-only post still goes through the direct browser RPC call above
+ * (unchanged). A photo post instead calls the server API
+ * (app/api/live-posts/[id]/delete/route.ts), because cleaning up the
+ * attached Storage objects needs a server-side step after the DB delete —
+ * see that route's own doc comment for the exact ordering (confirm
+ * deletion succeeded, *then* read the image keys, *then* best-effort
+ * delete each from Storage).
  */
-export function PostOwnerActions({ postId }: { postId: string }) {
+export function PostOwnerActions({
+  postId,
+  hasImages = false,
+  redirectTo = "/feed",
+}: {
+  postId: string;
+  hasImages?: boolean;
+  redirectTo?: string;
+}) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
@@ -40,6 +57,25 @@ export function PostOwnerActions({ postId }: { postId: string }) {
   // drives the UI.
   const submittingRef = useRef(false);
 
+  async function handleDeleteWithImages() {
+    try {
+      const response = await fetch(`/api/live-posts/${postId}/delete`, { method: "POST" });
+      if (!response.ok) {
+        console.error("post owner actions: server delete failed", response.status);
+        setError("削除できませんでした。しばらくしてから再度お試しください。");
+        setPending(false);
+        submittingRef.current = false;
+        return;
+      }
+      router.push(redirectTo);
+    } catch (fetchError) {
+      console.error("post owner actions: server delete request threw", fetchError);
+      setError("通信エラーが発生しました。ネットワーク環境をご確認のうえ、再度お試しください。");
+      setPending(false);
+      submittingRef.current = false;
+    }
+  }
+
   async function handleDelete() {
     if (submittingRef.current) {
       return;
@@ -47,6 +83,11 @@ export function PostOwnerActions({ postId }: { postId: string }) {
     submittingRef.current = true;
     setPending(true);
     setError(null);
+
+    if (hasImages) {
+      await handleDeleteWithImages();
+      return;
+    }
 
     let supabase;
     try {
@@ -92,7 +133,7 @@ export function PostOwnerActions({ postId }: { postId: string }) {
         return;
       }
 
-      router.push("/feed");
+      router.push(redirectTo);
     } catch (fetchError) {
       console.error("post owner actions: request threw", fetchError);
       setError("通信エラーが発生しました。ネットワーク環境をご確認のうえ、再度お試しください。");

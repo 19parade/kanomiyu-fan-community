@@ -6,6 +6,7 @@ import { CommentSection } from "@/components/feed/CommentSection";
 import { LikeButton } from "@/components/feed/LikeButton";
 import { PostOwnerActions } from "@/components/feed/PostOwnerActions";
 import { ReportButton } from "@/components/feed/ReportButton";
+import { PostImageGallery } from "@/components/live/PostImageGallery";
 import { AvatarInitial } from "@/components/ui/AvatarInitial";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
@@ -228,6 +229,24 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   // regardless of their current profile status). Only queried when
   // authenticated; anonymous visitors are always initialLiked=false and
   // see the login-prompt branch in LikeButton instead.
+  // LIVE機能 Phase 4-B: whether this post has photos determines which
+  // delete path PostOwnerActions uses (server API vs. the existing direct
+  // browser call) — see that component's own doc comment.
+  let hasImages = false;
+  if (post.post_type === "live_report") {
+    const { data: imageRow, error: imageError } = await supabase
+      .from("post_images")
+      .select("id")
+      .eq("post_id", post.id)
+      .limit(1)
+      .maybeSingle();
+    if (imageError) {
+      console.error("feed detail: post_images existence check failed", imageError.message);
+    } else {
+      hasImages = Boolean(imageRow);
+    }
+  }
+
   let initialLiked = false;
   if (viewerId) {
     const { data: likeRow, error: likeError } = await supabase
@@ -286,6 +305,8 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
           {post.content}
         </p>
 
+        {post.post_type === "live_report" ? <PostImageGallery postId={post.id} /> : null}
+
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
           <span>{formatPostDate(post.created_at)}</span>
           <LikeButton
@@ -300,7 +321,7 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
         </div>
 
         {isOwner ? (
-          <PostOwnerActions postId={post.id} />
+          <PostOwnerActions postId={post.id} hasImages={hasImages} redirectTo={post.event_id ? `/live/${post.event_id}` : "/feed"} />
         ) : (
           <div className="mt-4">
             <ReportButton

@@ -1,9 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { buttonClassName } from "@/components/ui/Button";
+import { reencodeImageFile } from "@/lib/post-images/reencode";
+import { uploadPostImage } from "@/lib/post-images/upload";
 import {
   countContentCodePoints,
   normalizeContent,
@@ -15,10 +17,36 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 const TEXTAREA_CLASS =
   "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
 
+const MAX_POST_IMAGES = 4;
+
+const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
+  FILE_TOO_LARGE: "画像のサイズが大きすぎます（1枚5MBまで）。",
+  UNSUPPORTED_IMAGE_TYPE: "対応していない画像形式です（JPEG・PNG・WebPのみ）。",
+  POST_IMAGE_UPLOAD_RATE_LIMITED: "画像のアップロードが多すぎます。しばらく時間をおいて再度お試しください。",
+  UPLOAD_FAILED: "画像をアップロードできませんでした。",
+};
+
+// Exact RAISE EXCEPTION text from create_live_report_post() (supabase/
+// migrations/20261026000000_post_images.sql) — matched verbatim, same
+// convention as lib/events/errors.ts's mapEventDbError().
+const LIVE_POST_ERROR_MESSAGES: Record<string, string> = {
+  POST_NOT_AUTHORIZED: "投稿できませんでした。ログイン状態をご確認ください。",
+  EVENT_NOT_AVAILABLE_FOR_POSTING: "このLIVEには投稿できません。",
+  TOO_MANY_POST_IMAGES: "画像は4枚までです。",
+  POST_IMAGE_NOT_OWNED: "画像のアップロードに問題が発生しました。もう一度お試しください。",
+  LIVE_REPORT_RATE_LIMITED: "投稿が多すぎます。しばらく時間をおいて再度お試しください。",
+};
+
 type PostFormProps =
   | { mode: "create"; userId: string }
   | { mode: "create-live"; userId: string; eventId: string }
   | { mode: "edit"; postId: string; initialContent: string };
+
+type SelectedImage = {
+  id: string; // local-only key for the preview list, not a Storage key
+  file: File;
+  previewUrl: string;
+};
 
 /**
  * F5-D2: shared create/edit form for posts.content (text-only MVP —
@@ -48,6 +76,9 @@ export function PostForm(props: PostFormProps) {
   const [content, setContent] = useState(props.mode === "edit" ? props.initialContent : "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<SelectedImage[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Double-submit guard: `pending` (React state) is NOT safe for this by
   // itself — setState batching means several synchronous clicks/Enter
@@ -62,6 +93,40 @@ export function PostForm(props: PostFormProps) {
 
   const codePointCount = countContentCodePoints(normalizeContent(content));
   const overLimit = codePointCount > POST_CONTENT_MAX_LENGTH;
+
+  // Image attachment is only offered in create-live mode (LIVE掲示板専用。
+  // 通常フィードへの画像投稿は追加しない — PM要件).
+  function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    // Always clear the input value so selecting the exact same file again
+    // later (after removing it) still fires a change event.
+    event.target.value = "";
+    if (files.length === 0) {
+      return;
+    }
+    setImages((prev) => {
+      const room = MAX_POST_IMAGES - prev.length;
+      if (room <= 0) {
+        return prev;
+      }
+      const accepted = files.slice(0, room).map((file) => ({
+        id: `${file.name}-${file.lastModified}-${crypto.randomUUID()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+      return [...prev, ...accepted];
+    });
+  }
+
+  function handleRemoveImage(id: string) {
+    setImages((prev) => {
+      const target = prev.find((image) => image.id === id);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((image) => image.id !== id);
+    });
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -97,15 +162,12 @@ export function PostForm(props: PostFormProps) {
     }
 
     try {
-      if (props.mode === "create" || props.mode === "create-live") {
-        const { data, error: insertError } =
-          props.mode === "create-live"
-            ? await supabase
-                .from("posts")
-                .insert({ author_id: props.userId, content: normalized, post_type: "live_report", event_id: props.eventId })
-                .select("id")
-                .single()
-            : await supabase.from("posts").insert({ author_id: props.userId, content: normalized }).select("id").single();
+      if (props.mode === "create") {
+        const { data, error: insertError } = await supabase
+          .from("posts")
+          .insert({ author_id: props.userId, content: normalized })
+          .select("id")
+          .single();
 
         if (insertError || !data) {
           console.error("post form: insert failed", insertError?.code, insertError?.message);
@@ -119,7 +181,61 @@ export function PostForm(props: PostFormProps) {
           return;
         }
 
-        router.push(props.mode === "create-live" ? `/live/${props.eventId}` : `/feed/${data.id}`);
+        router.push(`/feed/${data.id}`);
+        return;
+      }
+
+      if (props.mode === "create-live") {
+        // 1. re-encode + upload each selected image directly to Storage
+        // (never through this app's own server — see
+        // lib/post-images/upload.ts's doc comment). A failure at this step
+        // aborts the whole submission: no post is created with a partial
+        // set of images.
+        const imageKeys: string[] = [];
+        for (let i = 0; i < images.length; i += 1) {
+          setUploadStatus(`画像をアップロード中... (${i + 1}/${images.length})`);
+          const reencoded = await reencodeImageFile(images[i].file);
+          if (!reencoded.ok) {
+            setError("画像を処理できませんでした。別の画像でお試しください。");
+            setPending(false);
+            setUploadStatus(null);
+            submittingRef.current = false;
+            return;
+          }
+          const uploadResult = await uploadPostImage(supabase, reencoded.blob, reencoded.mime);
+          if (!uploadResult.ok) {
+            setError(UPLOAD_ERROR_MESSAGES[uploadResult.error] ?? "画像をアップロードできませんでした。");
+            setPending(false);
+            setUploadStatus(null);
+            submittingRef.current = false;
+            return;
+          }
+          imageKeys.push(uploadResult.key);
+        }
+        setUploadStatus(null);
+
+        // 2. create the post + attach the uploaded images atomically
+        // (create_live_report_post rolls back the post entirely if any key
+        // fails its ownership check — see supabase/migrations/
+        // 20261026000000_post_images.sql). Any already-uploaded-but-unused
+        // Storage objects left behind by a failure here are picked up
+        // later by the admin orphan cleanup endpoint, not compensated
+        // immediately (see Phase 4-B design report).
+        const { error: rpcError } = await supabase.rpc("create_live_report_post", {
+          target_event_id: props.eventId,
+          content: normalized,
+          image_keys: imageKeys,
+        });
+
+        if (rpcError) {
+          console.error("post form: create_live_report_post failed", rpcError.message);
+          setError(LIVE_POST_ERROR_MESSAGES[rpcError.message] ?? "投稿できませんでした。しばらくしてから再度お試しください。");
+          setPending(false);
+          submittingRef.current = false;
+          return;
+        }
+
+        router.push(`/live/${props.eventId}`);
         return;
       }
 
@@ -191,6 +307,61 @@ export function PostForm(props: PostFormProps) {
           {codePointCount}/{POST_CONTENT_MAX_LENGTH}文字
         </p>
       </div>
+
+      {props.mode === "create-live" ? (
+        <div>
+          <label className="block text-sm font-bold">写真（任意、最大{MAX_POST_IMAGES}枚）</label>
+          <p className="mt-1 text-xs text-muted">
+            JPEG・PNG・WebP、1枚5MBまで。ご自身が著作権を持つ、または投稿の許可を得た写真のみ添付してください。
+          </p>
+
+          {images.length > 0 ? (
+            <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {images.map((image) => (
+                <li key={image.id} className="relative aspect-square overflow-hidden rounded-xl border border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={image.previewUrl} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveImage(image.id)}
+                    disabled={pending}
+                    aria-label="この画像を取り消す"
+                    className="absolute right-1 top-1 rounded-full bg-black/60 px-2 py-1 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {images.length < MAX_POST_IMAGES ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={pending}
+              className={buttonClassName("secondary", "mt-3")}
+            >
+              写真を選ぶ（あと{MAX_POST_IMAGES - images.length}枚）
+            </button>
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={handleFilesSelected}
+            disabled={pending}
+            className="hidden"
+          />
+
+          {uploadStatus ? (
+            <p role="status" aria-live="polite" className="mt-2 text-xs text-muted">
+              {uploadStatus}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? (
         <p role="alert" aria-live="polite" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { EventImage } from "@/components/live/EventImage";
 import { ParticipationStatus } from "@/components/live/ParticipationStatus";
+import { PostImageGallery } from "@/components/live/PostImageGallery";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostForm } from "@/components/feed/PostForm";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
@@ -287,7 +288,12 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           ) : boardResult.posts.length === 0 ? (
             <p className="text-sm text-muted">まだ投稿がありません。最初の投稿をしてみませんか？</p>
           ) : (
-            boardResult.posts.map((post) => <PostCard key={post.id} post={post} />)
+            boardResult.posts.map((post) => (
+              <div key={post.id}>
+                <PostCard post={post} />
+                <PostImageGallery postId={post.id} />
+              </div>
+            ))
           )}
         </div>
       </section>
