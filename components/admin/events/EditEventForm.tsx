@@ -1,13 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
+import { EventImage } from "@/components/live/EventImage";
 import { isoToJstDateTimeLocalValue, jstDateTimeLocalToIso } from "@/lib/events/format";
 
 const TITLE_MAX_LENGTH = 100;
 const VENUE_MAX_LENGTH = 100;
 const DESCRIPTION_MAX_LENGTH = 5000;
+const ACCEPTED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // mirrors lib/event-images/validate.ts's MAX_EVENT_IMAGE_BYTES; UX hint only.
+
+type CoverActionValue = "keep" | "replace" | "remove";
 
 /**
  * Maps PATCH /api/admin/events/[id] and .../status's stable error codes
@@ -23,6 +28,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_EVENT_DOORS_TIME: "開場時刻を確認してください。",
   INVALID_EVENT_START_TIME: "開演時刻を確認してください。",
   INVALID_EVENT_OFFICIAL_URL: "公式情報リンクを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_EVENT_IMAGE_KEY: "キービジュアル画像の処理中にエラーが発生しました。もう一度お試しください。",
+  INVALID_UPLOAD: "画像ファイルを確認してください。",
+  FILE_TOO_LARGE: "画像ファイルは5MB以下にしてください。",
+  UNSUPPORTED_IMAGE_TYPE: "対応していない画像形式です（JPEG・PNG・WebPのみ利用できます）。",
+  IMAGE_TYPE_MISMATCH: "画像ファイルの内容と拡張子が一致しません。",
+  UPLOAD_FAILED: "画像のアップロードに失敗しました。もう一度お試しください。",
   UNAUTHORIZED: "ログインが必要です。再度ログインしてください。",
   FORBIDDEN: "この操作を行う権限がありません。",
   ORIGIN_INVALID: "リクエストを処理できませんでした。ページを再読み込みしてからお試しください。",
@@ -107,7 +118,8 @@ type EditEventFormProps = {
   initialDoorsTime: string | null;
   initialStartTime: string | null;
   initialDescription: string | null;
-  initialImageUrl: string | null;
+  initialImageKey: string | null;
+  initialImageDisplayUrl: string | null;
   initialTicketUrl: string | null;
   initialOfficialUrl: string | null;
   initialStatus: string;
@@ -125,6 +137,13 @@ type EditEventFormProps = {
  *
  * `versionToken` is carried as the exact raw `updated_at` string end to
  * end — never `new Date(...)`, never reformatted.
+ *
+ * LIVE機能 Phase 4-A: key-visual image management (`cover_action`) mirrors
+ * components/admin/music/EditSongForm.tsx exactly — "keep" resubmits
+ * `initialImageKey` unchanged, "replace" requires a file, "remove" clears it.
+ * The route handler (app/api/admin/events/[id]/route.ts) owns the actual
+ * Storage upload/delete; this component only ever sends the chosen file and
+ * action, never a Storage key it invented itself.
  */
 export function EditEventForm({
   eventId,
@@ -134,7 +153,8 @@ export function EditEventForm({
   initialDoorsTime,
   initialStartTime,
   initialDescription,
-  initialImageUrl,
+  initialImageKey,
+  initialImageDisplayUrl,
   initialTicketUrl,
   initialOfficialUrl,
   initialStatus,
@@ -152,6 +172,12 @@ export function EditEventForm({
   const [officialUrl, setOfficialUrl] = useState(initialOfficialUrl ?? "");
   const [ticketUrl, setTicketUrl] = useState(initialTicketUrl ?? "");
 
+  const [coverAction, setCoverAction] = useState<CoverActionValue>("keep");
+  const [newFile, setNewFile] = useState<File | null>(null);
+  const [newFilePreviewUrl, setNewFilePreviewUrl] = useState<string | null>(null);
+  const hasCurrentCover = initialImageKey !== null;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [versionToken, setVersionToken] = useState(initialUpdatedAt);
   const [status, setStatus] = useState(initialStatus);
   const [firstPublishedAt, setFirstPublishedAt] = useState(initialFirstPublishedAt);
@@ -160,6 +186,69 @@ export function EditEventForm({
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (newFilePreviewUrl) {
+        URL.revokeObjectURL(newFilePreviewUrl);
+      }
+    };
+  }, [newFilePreviewUrl]);
+
+  function clearNewFile() {
+    if (newFilePreviewUrl) {
+      URL.revokeObjectURL(newFilePreviewUrl);
+    }
+    setNewFile(null);
+    setNewFilePreviewUrl(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function handleCoverActionChange(next: CoverActionValue) {
+    setCoverAction(next);
+    setError(null);
+    if (next !== "replace") {
+      clearNewFile();
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0] ?? null;
+
+    if (newFilePreviewUrl) {
+      URL.revokeObjectURL(newFilePreviewUrl);
+    }
+
+    if (selected === null) {
+      setNewFile(null);
+      setNewFilePreviewUrl(null);
+      return;
+    }
+
+    // UX-only checks — the server's magic-byte/size/MIME validation
+    // (lib/event-images/validate.ts, via the existing PATCH route) remains
+    // authoritative regardless of what passes here.
+    if (!ACCEPTED_IMAGE_TYPES.includes(selected.type)) {
+      setError(ERROR_MESSAGES.UNSUPPORTED_IMAGE_TYPE);
+      setNewFile(null);
+      setNewFilePreviewUrl(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (selected.size > MAX_IMAGE_BYTES) {
+      setError(ERROR_MESSAGES.FILE_TOO_LARGE);
+      setNewFile(null);
+      setNewFilePreviewUrl(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    setError(null);
+    setNewFile(selected);
+    setNewFilePreviewUrl(URL.createObjectURL(selected));
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -177,30 +266,49 @@ export function EditEventForm({
       setError(ERROR_MESSAGES.INVALID_EVENT_DATE);
       return;
     }
+    if (coverAction === "replace" && newFile === null) {
+      setError("差し替える画像ファイルを選択してください。");
+      return;
+    }
 
     setPending(true);
     setError(null);
     setConflict(false);
     setSuccessMessage(null);
 
+    const formData = new FormData();
+    // Raw string, exactly as received — never new Date(...), never
+    // .toISOString(), never reformatted.
+    formData.append("expected_updated_at", versionToken);
+    formData.append("title", title);
+    formData.append("venue", venue);
+    formData.append("event_date", eventDateIso);
+    if (description !== "") {
+      formData.append("description", description);
+    }
+    const doorsTimeIso = jstDateTimeLocalToIso(doorsTime);
+    if (doorsTimeIso) {
+      formData.append("doors_time", doorsTimeIso);
+    }
+    const startTimeIso = jstDateTimeLocalToIso(startTime);
+    if (startTimeIso) {
+      formData.append("start_time", startTimeIso);
+    }
+    if (ticketUrl !== "") {
+      formData.append("ticket_url", ticketUrl);
+    }
+    if (officialUrl !== "") {
+      formData.append("official_url", officialUrl);
+    }
+    formData.append("cover_action", coverAction);
+    if (coverAction === "replace" && newFile) {
+      formData.append("file", newFile);
+    }
+
     try {
-      const response = await fetch(`/api/admin/events/${eventId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expected_updated_at: versionToken,
-          title,
-          venue,
-          event_date: eventDateIso,
-          description: description !== "" ? description : null,
-          // No upload UI yet — always resubmit the current key unchanged.
-          image_url: initialImageUrl,
-          ticket_url: ticketUrl !== "" ? ticketUrl : null,
-          doors_time: jstDateTimeLocalToIso(doorsTime),
-          start_time: jstDateTimeLocalToIso(startTime),
-          official_url: officialUrl !== "" ? officialUrl : null,
-        }),
-      });
+      // Browser sets its own multipart boundary; Content-Type is never set
+      // manually here (existing music admin route precedent).
+      const response = await fetch(`/api/admin/events/${eventId}`, { method: "PATCH", body: formData });
       const body = await response.json().catch(() => null);
 
       if (!response.ok) {
@@ -221,6 +329,16 @@ export function EditEventForm({
       setVersionToken(newUpdatedAt);
       setSuccessMessage("保存しました。");
       setPending(false);
+
+      if (coverAction === "replace" || coverAction === "remove") {
+        // The PATCH response's image_url reflects the new state, but the
+        // display URL must be re-resolved server-side (Storage getPublicUrl)
+        // — app/admin/events/[id]/page.tsx keys this component by
+        // `event.updated_at`, since this save just changed that value on the
+        // server, the refreshed render below will mount a fresh instance
+        // with the correct new image (or none, for "remove").
+        router.refresh();
+      }
     } catch (fetchError) {
       console.error("edit event form: request failed", fetchError);
       setError(GENERIC_ERROR_MESSAGE);
@@ -426,6 +544,81 @@ export function EditEventForm({
             onChange={(event) => setTicketUrl(event.target.value)}
           />
         </div>
+
+        <fieldset disabled={pending}>
+          <legend>キービジュアル画像</legend>
+          <p>
+            アップロードする画像は、ご自身が著作権を持つもの、または著作権者・公式から使用許諾を得たものに限ります。第三者の権利を侵害する画像はアップロードしないでください。
+          </p>
+
+          {hasCurrentCover ? (
+            <div>
+              <p>現在の画像</p>
+              <div style={{ width: 160, height: 90 }}>
+                <EventImage src={initialImageDisplayUrl} alt="現在のキービジュアル" />
+              </div>
+            </div>
+          ) : (
+            <p>現在、画像は登録されていません。</p>
+          )}
+
+          <label>
+            <input
+              type="radio"
+              name="cover-action-ui"
+              value="keep"
+              checked={coverAction === "keep"}
+              onChange={() => handleCoverActionChange("keep")}
+            />
+            現在の画像を維持
+          </label>
+          <br />
+          <label>
+            <input
+              type="radio"
+              name="cover-action-ui"
+              value="replace"
+              checked={coverAction === "replace"}
+              onChange={() => handleCoverActionChange("replace")}
+            />
+            画像を{hasCurrentCover ? "差し替える" : "登録する"}
+          </label>
+          {hasCurrentCover ? (
+            <>
+              <br />
+              <label>
+                <input
+                  type="radio"
+                  name="cover-action-ui"
+                  value="remove"
+                  checked={coverAction === "remove"}
+                  onChange={() => handleCoverActionChange("remove")}
+                />
+                画像を削除
+              </label>
+            </>
+          ) : null}
+
+          {coverAction === "replace" ? (
+            <div>
+              <label htmlFor="edit-event-image-file">新しい画像（JPEG・PNG・WebP、5MB以下）</label>
+              <br />
+              <input
+                id="edit-event-image-file"
+                name="file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                ref={fileInputRef}
+                disabled={pending}
+                onChange={handleFileChange}
+              />
+              {newFilePreviewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={newFilePreviewUrl} alt="新しいキービジュアルのプレビュー" width={160} height={90} />
+              ) : null}
+            </div>
+          ) : null}
+        </fieldset>
 
         <button type="submit" disabled={pending}>
           {pending ? "保存中..." : "内容を保存"}

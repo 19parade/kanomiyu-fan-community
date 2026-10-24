@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { EditEventForm } from "@/components/admin/events/EditEventForm";
+import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -80,7 +81,8 @@ export default async function EditEventPage({ params }: { params: Promise<{ id: 
         initialDoorsTime={event.doors_time}
         initialStartTime={event.start_time}
         initialDescription={event.description}
-        initialImageUrl={event.image_url}
+        initialImageKey={event.image_url}
+        initialImageDisplayUrl={getEventImagePublicUrl(supabase, event.image_url)}
         initialTicketUrl={event.ticket_url}
         initialOfficialUrl={event.official_url}
         initialStatus={event.status}
