@@ -3,11 +3,8 @@ import Image from "next/image";
 import Link from "next/link";
 
 import { Card } from "@/components/ui/Card";
-import { buttonClassName } from "@/components/ui/Button";
-import { OPERATOR_NAME, SITE_NAME, UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { SITE_NAME } from "@/lib/legal/site-info";
 import { buildPageMetadata } from "@/lib/seo/metadata";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = buildPageMetadata({
   description:
@@ -15,18 +12,49 @@ export const metadata: Metadata = buildPageMetadata({
   path: "/",
 });
 
-/**
- * Top page (D2, bug-fix pass 2026-10-22). The hero CTA row used to always
- * show 会員登録/ログイン regardless of session state — the same
- * resolveMemberAccess() read used by components/SiteHeader.tsx now decides
- * which buttons this card shows, so a signed-in visitor is not invited to
- * sign up/log in again.
- */
-export default async function Home() {
-  const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
-  const isSignedIn = access.kind !== "unauthenticated";
+// PM方針 2026-10-25: トップページの運営者からのお知らせ文。改行・絵文字は
+// 運営者からの原文のまま、whitespace-pre-wrap で表示する。
+const ANNOUNCEMENT_TEXT = `🎉【サイト運営者パレードよりお知らせ】🎉
+かのうみゆさんのファンコミュニティサイトを作りました！✨
 
+かのうみゆさんを応援するファンの皆さんが、情報や感動を共有し、もっと交流できる場所にしたいと思っています😊
+
+💭 なぜ、このサイトを作ったのか？
+TikTok LIVEなどで皆さんから飛び出す素敵なアイデアや、ライブ後に投稿される熱量たっぷりの感想・レポート。
+
+どれも貴重なのに、SNSや配信など、いろいろな場所に分散してしまっているのが、以前からもったいないなと感じていました。
+
+「ファンの皆さんの想いや情報が集まって、いつでも振り返れる場所があったらいいな」
+
+そんな想いから、このサイトを作りました。
+
+🎵 サイトではこんなことができます！
+
+📅 LIVE情報のチェック
+🙋 LIVEへの参加予定の登録
+📸 LIVE掲示板で感想や写真を共有
+💬 ファン同士で投稿・コメント・交流
+🎶 かのうみゆさんの音楽情報をチェック
+
+特にLIVE掲示板では、ライブ前のワクワクも、終演後の興奮も、皆さんで共有できたら嬉しいです！🔥
+
+11月の生誕祭も、ぜひ一緒に盛り上げていきましょう🎂🎉
+
+🚀 サイトはまだまだ成長途中です！
+
+現在、投稿できるのはテキストと画像のみで、動画投稿には対応していません。
+
+これから皆さんのご意見を取り入れながら、少しずつ使いやすく、楽しい場所に育てていきたいと思っています。
+
+気になる点や改善してほしいこと、追加してほしい機能などがあれば、サイト下部の「お問い合わせ」からお気軽にお寄せください🙇
+
+このサイトは個人が運営する非公式ファンコミュニティです。
+
+ファンの皆さんと一緒に作っていく場所にしたいと思っています。
+
+※公式の発表は、必ず かのうみゆさんご本人・所属事務所等の公式情報でご確認ください。`;
+
+export default function Home() {
   return (
     <div className="flex flex-1 flex-col">
       <section className="relative overflow-hidden sm:mx-4 sm:mt-4 sm:rounded-3xl">
@@ -44,13 +72,13 @@ export default async function Home() {
 
         <div className="absolute inset-x-0 bottom-0 px-4 pb-6 sm:px-8 sm:pb-8">
           <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-xs font-bold text-white backdrop-blur-sm">
-            {UNOFFICIAL_LABEL}
+            非公式ファンコミュニティ
           </span>
           <h1 className="mt-3 text-3xl font-bold leading-tight text-white drop-shadow sm:text-4xl">
             {SITE_NAME}
           </h1>
           <p className="mt-2 max-w-md text-sm leading-relaxed text-white/90 drop-shadow">
-            かのうみゆさんを応援するファンが集まる、{OPERATOR_NAME}運営の非公式コミュニティです。
+            かのうみゆさんを応援するファンが集まるコミュニティです。
           </p>
         </div>
       </section>
@@ -58,35 +86,9 @@ export default async function Home() {
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10 sm:px-6">
         <Card className="p-6 sm:p-8">
           <h2 className="text-lg font-bold">ここは、ファンのための場所です</h2>
-          <p className="mt-3 text-sm leading-relaxed text-muted">
-            好きな曲の話、LIVEの感想、応援の気持ち。{SITE_NAME}は、かのうみゆさんのファンが
-            安心して楽しく過ごせる場所を目指す、個人運営の非公式サイトです。公式の発表は、必ず
-            かのうみゆさんご本人・所属事務所等の公式情報でご確認ください。
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted">
+            {ANNOUNCEMENT_TEXT}
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link href="/music" className={buttonClassName("primary")}>
-              楽曲を見る
-            </Link>
-            {isSignedIn ? (
-              <>
-                <Link href="/feed" className={buttonClassName("secondary")}>
-                  投稿一覧
-                </Link>
-                <Link href="/me" className={buttonClassName("ghost")}>
-                  マイページ
-                </Link>
-              </>
-            ) : (
-              <>
-                <Link href="/signup" className={buttonClassName("secondary")}>
-                  会員登録
-                </Link>
-                <Link href="/login" className={buttonClassName("ghost")}>
-                  ログイン
-                </Link>
-              </>
-            )}
-          </div>
         </Card>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2">

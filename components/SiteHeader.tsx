@@ -49,7 +49,7 @@ export async function SiteHeader() {
               <>
                 <li>
                   <Link href="/feed" className={NAV_LINK_CLASS}>
-                    投稿一覧
+                    みんなの掲示板
                   </Link>
                 </li>
                 <li>
