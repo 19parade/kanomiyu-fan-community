@@ -49,12 +49,18 @@ export function ParticipationStatus({
   eventDate,
   initialParticipation,
   isLoggedIn,
+  participantCount,
 }: {
   eventId: string;
   eventStatus: "public" | "cancelled";
   eventDate: string;
   initialParticipation: { status: ParticipationValue } | null;
   isLoggedIn: boolean;
+  // get_event_participant_count() RPC の結果（status='going'の全件数、
+  // visibilityは問わない — PM方針2026-10-28）。ページ表示時点のスナップ
+  // ショットで、この場で参加予定にしても即座には増減しない（再読み込みで
+  // 反映される）。
+  participantCount: number;
 }) {
   const [participation, setParticipation] = useState(initialParticipation);
   const [pending, setPending] = useState(false);
@@ -71,7 +77,10 @@ export function ParticipationStatus({
   if (!isLoggedIn) {
     return (
       <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
-        <h2 className="font-bold">参加ステータス</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-bold">参加ステータス</h2>
+          <span className="text-sm text-muted">参加予定：{participantCount}名</span>
+        </div>
         <p className="mt-2 text-sm text-muted">
           <Link href={`/login?next=/live/${eventId}`} className="font-bold text-brand underline-offset-2 hover:underline">
             ログイン
@@ -130,7 +139,10 @@ export function ParticipationStatus({
 
   return (
     <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
-      <h2 className="font-bold">参加ステータス</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-bold">参加ステータス</h2>
+        <span className="text-sm text-muted">参加予定：{participantCount}名</span>
+      </div>
 
       {eventStatus === "cancelled" ? (
         <>

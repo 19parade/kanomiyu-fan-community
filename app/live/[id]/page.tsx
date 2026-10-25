@@ -200,6 +200,20 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
     }
   }
 
+  // 参加予定者数（2026-10-28付PM方針）: visibilityに関わらずstatus='going'の
+  // 全行をカウントする get_event_participant_count() RPC を、ページアクセス
+  // 時に一度だけ呼ぶ。失敗してもページ全体は壊さず、表示を0件に留める。
+  let participantCount = 0;
+  const { data: participantCountData, error: participantCountError } = await supabase.rpc(
+    "get_event_participant_count",
+    { target_event_id: id }
+  );
+  if (participantCountError) {
+    console.error("live detail: participant count fetch failed", participantCountError.message);
+  } else if (typeof participantCountData === "number") {
+    participantCount = participantCountData;
+  }
+
   const doorsTimeText = formatEventDateTime(event.doors_time);
   const startTimeText = formatEventDateTime(event.start_time);
   const boardResult = await fetchLiveBoardPosts(supabase, event.id);
@@ -312,6 +326,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         eventDate={event.event_date}
         initialParticipation={initialParticipation}
         isLoggedIn={isLoggedIn}
+        participantCount={participantCount}
       />
 
       <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
