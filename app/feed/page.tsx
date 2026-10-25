@@ -5,6 +5,7 @@ import { FeedList } from "@/components/feed/FeedList";
 import { buttonClassName } from "@/components/ui/Button";
 import { resolveMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
+import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
 import { buildPageMetadata } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -86,7 +87,12 @@ export default async function FeedPage() {
     return failedMessage;
   }
 
-  const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors));
+  const linkPreviewMap = await fetchLinkPreviewsForContents(
+    supabase,
+    rows.map((row) => row.content)
+  );
+
+  const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap));
 
   return (
     <main className="mx-auto min-w-0 max-w-2xl px-4 py-8 sm:px-6">

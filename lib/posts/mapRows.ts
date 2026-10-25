@@ -1,5 +1,7 @@
+import { extractFirstUrl } from "@/lib/links/extract";
+
 import { excerptContent } from "./format";
-import type { PublicComment, PublicPostAuthor, PublicPostListItem } from "./types";
+import type { PublicComment, PublicLinkPreview, PublicPostAuthor, PublicPostListItem } from "./types";
 
 /**
  * F5-D1 / F5-D1b: shared SELECT column list for the feed list query (used
@@ -59,15 +61,21 @@ function toPostType(value: string): PublicPostListItem["post_type"] {
 }
 
 /**
- * Maps one raw posts row (plus the already-fetched author batch) into the
- * public list-item shape. Never includes the full `content` — only a
- * truncated excerpt — so the list API response stays small and never
- * over-exposes a long post body before the reader opens it.
+ * Maps one raw posts row (plus the already-fetched author batch and
+ * link-preview batch) into the public list-item shape. Never includes the
+ * full `content` — only a truncated excerpt — so the list API response
+ * stays small and never over-exposes a long post body before the reader
+ * opens it. The link preview lookup, however, is always done against the
+ * row's *full* `content` (via extractFirstUrl), not the truncated excerpt —
+ * a post's first URL can easily sit past the excerpt's cutoff, and looking
+ * it up from the excerpt would silently miss it.
  */
 export function mapPostListRow(
   row: PostListRow,
-  authorMap: Map<string, PublicPostAuthor>
+  authorMap: Map<string, PublicPostAuthor>,
+  linkPreviewMap: Map<string, PublicLinkPreview> = new Map()
 ): PublicPostListItem {
+  const firstUrl = extractFirstUrl(row.content);
   return {
     id: row.id,
     author_id: row.author_id,
@@ -77,6 +85,8 @@ export function mapPostListRow(
     like_count: row.likes?.[0]?.count ?? 0,
     comment_count: row.comments?.[0]?.count ?? 0,
     author: authorMap.get(row.author_id) ?? null,
+    linkPreviewUrl: firstUrl,
+    linkPreview: firstUrl ? linkPreviewMap.get(firstUrl) ?? null : null,
   };
 }
 

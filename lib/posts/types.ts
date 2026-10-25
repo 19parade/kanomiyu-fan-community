@@ -15,6 +15,23 @@ export type PublicPostAuthor = {
 export type PostType = "normal" | "live_report";
 
 /**
+ * Cached metadata for the first URL found in a post's content — resolved
+ * from the shared public.link_previews cache table (see supabase/
+ * migrations/20261027000000_link_previews.sql). `null` on the post itself
+ * means either no URL was found, or one was found but no successful
+ * preview is cached for it yet (an unsupported/broken link, or one still
+ * mid-retry) — callers must not distinguish the two, same as every other
+ * "quietly render nothing extra" fallback in this codebase.
+ */
+export type PublicLinkPreview = {
+  provider: "youtube" | "tiktok" | "x" | "generic";
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+};
+
+/**
  * `author` is null when get_public_profiles_by_ids() did not return a row
  * for this author_id — e.g. the author was banned after publishing, or the
  * RPC call itself failed (lib/posts/authors.ts degrades to an empty map
@@ -30,6 +47,13 @@ export type PublicPostListItem = {
   like_count: number;
   comment_count: number;
   author: PublicPostAuthor | null;
+  // The exact URL `linkPreview` was resolved for — always derived from the
+  // row's *full* content server-side, never re-derived from `excerpt` on
+  // the client (the first URL can sit past the excerpt's truncation
+  // point, so re-extracting from `excerpt` could silently mismatch or miss
+  // it entirely). `null` whenever `linkPreview` is `null`.
+  linkPreviewUrl: string | null;
+  linkPreview: PublicLinkPreview | null;
 };
 
 export type PublicPostDetail = {
@@ -42,6 +66,8 @@ export type PublicPostDetail = {
   like_count: number;
   comment_count: number;
   author: PublicPostAuthor | null;
+  linkPreviewUrl: string | null;
+  linkPreview: PublicLinkPreview | null;
 };
 
 export type PublicComment = {

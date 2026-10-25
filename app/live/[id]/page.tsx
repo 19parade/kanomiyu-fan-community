@@ -11,6 +11,7 @@ import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
 import { resolveMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
+import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { SITE_URL } from "@/lib/legal/site-info";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
 import type { PublicPostListItem } from "@/lib/posts/types";
@@ -114,7 +115,12 @@ async function fetchLiveBoardPosts(
     return { ok: false };
   }
 
-  return { ok: true, posts: rows.map((row) => mapPostListRow(row, authorLookup.authors)) };
+  const linkPreviewMap = await fetchLinkPreviewsForContents(
+    supabase,
+    rows.map((row) => row.content)
+  );
+
+  return { ok: true, posts: rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap)) };
 }
 
 export async function generateMetadata({

@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 
 import { CommentSection } from "@/components/feed/CommentSection";
 import { LikeButton } from "@/components/feed/LikeButton";
+import { LinkPreviewCard } from "@/components/feed/LinkPreviewCard";
+import { PostContentText } from "@/components/feed/PostContentText";
 import { PostOwnerActions } from "@/components/feed/PostOwnerActions";
 import { ReportButton } from "@/components/feed/ReportButton";
 import { PostImageGallery } from "@/components/live/PostImageGallery";
@@ -11,8 +13,10 @@ import { AvatarInitial } from "@/components/ui/AvatarInitial";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 import { resolveMemberAccess } from "@/lib/member/access";
+import { extractFirstUrl } from "@/lib/links/extract";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
+import { fetchLinkPreviewsByUrls } from "@/lib/posts/linkPreviews";
 import { COMMENT_LIST_SELECT_COLUMNS, mapCommentListRow, type CommentListRow } from "@/lib/posts/mapRows";
 import type { PublicComment, PublicPostAuthor, PublicPostDetail } from "@/lib/posts/types";
 import { buildPageMetadata } from "@/lib/seo/metadata";
@@ -141,6 +145,9 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
     throw new Error("FEED_DETAIL_FETCH_FAILED");
   }
 
+  const firstUrl = extractFirstUrl(postRow.content);
+  const linkPreviewMap = firstUrl ? await fetchLinkPreviewsByUrls(supabase, [firstUrl]) : new Map();
+
   const post: PublicPostDetail = {
     id: postRow.id,
     author_id: postRow.author_id,
@@ -151,6 +158,8 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
     like_count: postRow.likes?.[0]?.count ?? 0,
     comment_count: postRow.comments?.[0]?.count ?? 0,
     author: authorLookup.authors.get(postRow.author_id) ?? null,
+    linkPreviewUrl: firstUrl,
+    linkPreview: firstUrl ? linkPreviewMap.get(firstUrl) ?? null : null,
   };
 
   const comments = rawComments.map((row) => mapCommentListRow(row, authorLookup.authors));
@@ -305,9 +314,14 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
           </span>
         </div>
 
-        <p className="mt-6 whitespace-pre-wrap border-t border-border pt-6 text-sm leading-relaxed [overflow-wrap:anywhere]">
-          {post.content}
-        </p>
+        <PostContentText
+          content={post.content}
+          className="mt-6 whitespace-pre-wrap border-t border-border pt-6 text-sm leading-relaxed [overflow-wrap:anywhere]"
+        />
+
+        {post.linkPreview && post.linkPreviewUrl ? (
+          <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} />
+        ) : null}
 
         {post.post_type === "live_report" ? <PostImageGallery postId={post.id} /> : null}
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
+import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -126,7 +127,12 @@ export async function GET(request: Request) {
     return errorResponse("LIST_FAILED", 500);
   }
 
-  const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors));
+  const linkPreviewMap = await fetchLinkPreviewsForContents(
+    supabase,
+    rows.map((row) => row.content)
+  );
+
+  const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap));
 
   return NextResponse.json(
     { posts, has_more: rows.length === PAGE_SIZE },

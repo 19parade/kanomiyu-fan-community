@@ -1,11 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 
+import { LinkPreviewCard } from "@/components/feed/LinkPreviewCard";
 import { buttonClassName } from "@/components/ui/Button";
+import { extractFirstUrl } from "@/lib/links/extract";
 import { reencodeImageFile } from "@/lib/post-images/reencode";
 import { uploadPostImage } from "@/lib/post-images/upload";
+import type { PublicLinkPreview } from "@/lib/posts/types";
 import {
   countContentCodePoints,
   normalizeContent,
@@ -13,6 +16,11 @@ import {
   validateNormalizedContent,
 } from "@/lib/posts/validation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+
+// Debounce before triggering a link-preview fetch after the user stops
+// typing/pasting — avoids calling the endpoint (and consuming its rate
+// limit) on every keystroke while a URL is still being typed out.
+const LINK_PREVIEW_DEBOUNCE_MS = 800;
 
 const TEXTAREA_CLASS =
   "mt-1 w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50";
@@ -93,6 +101,61 @@ export function PostForm(props: PostFormProps) {
 
   const codePointCount = countContentCodePoints(normalizeContent(content));
   const overLimit = codePointCount > POST_CONTENT_MAX_LENGTH;
+
+  // Link preview (2026-10-27 design review): the actual outbound fetch to
+  // the posted URL happens exactly once, here, at compose time — never on
+  // every later page view (see app/api/link-preview/route.ts's own doc
+  // comment). `linkPreviewUrl` is pure derived state (computed every render
+  // from `content`, never synced via useEffect) — only the async fetch
+  // itself, and the `linkPreview` data it produces, are effects.
+  // `lastFetchedUrlRef` prevents re-fetching while the user keeps typing
+  // unrelated text after a URL that's already been resolved.
+  const linkPreviewUrl = extractFirstUrl(normalizeContent(content));
+  const [linkPreview, setLinkPreview] = useState<PublicLinkPreview | null>(null);
+  const lastFetchedUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (linkPreviewUrl === lastFetchedUrlRef.current) {
+      return;
+    }
+    if (!linkPreviewUrl) {
+      // No setLinkPreview(null) here: the render below only ever shows the
+      // preview when `linkPreviewUrl` is truthy, so stale `linkPreview`
+      // state is already masked — nothing to clear.
+      lastFetchedUrlRef.current = null;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      lastFetchedUrlRef.current = linkPreviewUrl;
+      const controller = new AbortController();
+
+      fetch("/api/link-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: normalizeContent(content) }),
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body: { ok: boolean; preview: PublicLinkPreview | null } | null) => {
+          // The user may have already changed the content again by the time
+          // this resolves — only apply the result if it's still for the
+          // most recently requested URL.
+          if (lastFetchedUrlRef.current === linkPreviewUrl) {
+            setLinkPreview(body?.ok ? body.preview : null);
+          }
+        })
+        .catch((fetchError) => {
+          if (fetchError?.name !== "AbortError") {
+            console.error("post form: link preview fetch failed", fetchError);
+          }
+        });
+
+      return () => controller.abort();
+    }, LINK_PREVIEW_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [linkPreviewUrl, content]);
 
   // Image attachment is only offered in create-live mode (LIVE掲示板専用。
   // 通常フィードへの画像投稿は追加しない — PM要件).
@@ -306,6 +369,7 @@ export function PostForm(props: PostFormProps) {
         <p className={`mt-1 text-right text-xs ${overLimit ? "text-rose-600" : "text-muted"}`}>
           {codePointCount}/{POST_CONTENT_MAX_LENGTH}文字
         </p>
+        {linkPreviewUrl && linkPreview ? <LinkPreviewCard url={linkPreviewUrl} preview={linkPreview} /> : null}
       </div>
 
       {props.mode === "create-live" ? (
