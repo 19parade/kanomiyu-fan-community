@@ -111,6 +111,16 @@ export default function Home() {
             </Link>
           </Card>
         </div>
+
+        <Card className="mt-4 p-6">
+          <h3 className="font-bold">PROFILE</h3>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            かのうみゆさんのプロフィールを掲載しています。
+          </p>
+          <Link href="/profile" className="mt-4 inline-block text-sm font-bold text-brand underline underline-offset-2">
+            プロフィールへ →
+          </Link>
+        </Card>
       </main>
     </div>
   );
