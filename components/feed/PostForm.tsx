@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "r
 
 import { LinkPreviewCard } from "@/components/feed/LinkPreviewCard";
 import { buttonClassName } from "@/components/ui/Button";
+import { Toast } from "@/components/ui/Toast";
 import { extractFirstUrl } from "@/lib/links/extract";
 import { reencodeImageFile } from "@/lib/post-images/reencode";
 import { uploadPostImage } from "@/lib/post-images/upload";
@@ -98,6 +99,14 @@ export function PostForm(props: PostFormProps) {
   // the same tick sees the updated value. `pending` state is kept only to
   // drive the UI (disabled attribute, button label).
   const submittingRef = useRef(false);
+
+  // 2026-10-27 bug report: "create-live" posts on success navigate (below)
+  // to the exact page this form is already embedded in (app/live/[id]/
+  // page.tsx renders this form directly) — router.push() to the same route
+  // does NOT unmount this component, so without an explicit reset here the
+  // submit button stayed stuck on "送信中..." forever. This also doubles
+  // as the "投稿が完了しました" confirmation the bug report asked for.
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const codePointCount = countContentCodePoints(normalizeContent(content));
   const overLimit = codePointCount > POST_CONTENT_MAX_LENGTH;
@@ -298,7 +307,19 @@ export function PostForm(props: PostFormProps) {
           return;
         }
 
-        router.push(`/live/${props.eventId}`);
+        // This form stays mounted on this same page after a successful
+        // post (app/live/[id]/page.tsx renders it directly — there is no
+        // separate page to navigate away to), so the form must reset
+        // itself explicitly rather than relying on unmount. router.refresh()
+        // re-fetches this page's server-rendered post list to include the
+        // new post, without discarding this component's state wholesale.
+        images.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+        setContent("");
+        setImages([]);
+        setPending(false);
+        submittingRef.current = false;
+        setSuccessMessage("投稿が完了しました");
+        router.refresh();
         return;
       }
 
@@ -436,6 +457,8 @@ export function PostForm(props: PostFormProps) {
       <button type="submit" disabled={pending} className={buttonClassName("primary", "w-full")}>
         {pending ? "送信中..." : props.mode === "edit" ? "更新する" : "投稿する"}
       </button>
+
+      {successMessage ? <Toast message={successMessage} onDismiss={() => setSuccessMessage(null)} /> : null}
     </form>
   );
 }
