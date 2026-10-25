@@ -242,6 +242,17 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# 会員登録確認メール（PM方針 2026-10-25: デフォルトの英語テンプレートが分かりづらいとの
+# 指摘を受けて日本語化。リンク先は {{ .ConfirmationURL }} — Supabase Authが自動で
+# ワンタイムトークン付きURLに置換する。本番・検証プロジェクトへはダッシュボードの
+# Authentication > Emails > Confirm signup から同じ件名・本文を手動で反映する
+# （`supabase config push` は config.toml全体を対象へ上書きし、本設定ファイルが
+# 追随していない enable_confirmations 等の既存ダッシュボード設定を意図せず
+# 巻き戻す恐れがあるため、この1項目のためには使用しない）。
+[auth.email.template.confirmation]
+subject = "[かのうみゆファンコミュニティ]会員登録お手続きをお願いします"
+content_path = "./supabase/templates/confirmation.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"
