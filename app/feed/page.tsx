@@ -12,10 +12,17 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 const INITIAL_PAGE_SIZE = 20;
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "投稿一覧",
-  description: "かのうみゆさんのファンによる投稿の一覧です。感想や応援コメントをファン同士で共有できます。",
+  title: "みんなの掲示板",
+  description:
+    "かのうみゆさんのこと、自由に話そう！自己紹介や日々の雑談、やってほしい企画、欲しいグッズのアイデアなど、ファン同士で気軽に交流できる掲示板です。",
   path: "/feed",
 });
+
+// PM方針 2026-10-25: グローバルナビの「みんなの掲示板」への改称に合わせて、
+// このページ自身の見出し・説明文も合わせる。改行・絵文字は原文のまま、
+// whitespace-pre-wrap で表示する。
+const FEED_DESCRIPTION = `かのうみゆさんのこと、自由に話そう！🌸
+自己紹介や日々の雑談、やってほしい企画、欲しいグッズのアイデアなど、ファン同士で気軽に交流できる場所です。各投稿をタップするとコメントすることができます。`;
 
 /**
  * /feed — public post feed (F5-D1). Server Component: fetches the first
@@ -52,7 +59,7 @@ export default async function FeedPage() {
 
   const failedMessage = (
     <main className="mx-auto min-w-0 max-w-2xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-bold sm:text-3xl">投稿一覧</h1>
+      <h1 className="text-2xl font-bold sm:text-3xl">みんなの掲示板</h1>
       <p role="alert" className="mt-4 text-red-600">
         投稿一覧の取得に失敗しました。
       </p>
@@ -85,8 +92,8 @@ export default async function FeedPage() {
     <main className="mx-auto min-w-0 max-w-2xl px-4 py-8 sm:px-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold sm:text-3xl">投稿一覧</h1>
-          <p className="mt-2 text-sm text-muted">かのうみゆさんのファンによる投稿の一覧です。</p>
+          <h1 className="text-2xl font-bold sm:text-3xl">みんなの掲示板</h1>
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted">{FEED_DESCRIPTION}</p>
         </div>
         {canPost ? (
           <Link href="/feed/new" className={buttonClassName("primary", "w-full sm:w-auto")}>
