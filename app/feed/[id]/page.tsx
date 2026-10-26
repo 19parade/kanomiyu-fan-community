@@ -12,7 +12,7 @@ import { PostImageGallery } from "@/components/live/PostImageGallery";
 import { AvatarInitial } from "@/components/ui/AvatarInitial";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { extractFirstUrl } from "@/lib/links/extract";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
@@ -132,10 +132,24 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
     // every other id in this list.
     authorIds.push(viewerId);
   }
+  const firstUrl = extractFirstUrl(postRow.content);
+
+  // 施策3（2026-10-27パフォーマンス調査）: the author batch lookup and the
+  // link-preview lookup are mutually independent (the author lookup never
+  // reads post.content's URL; the link-preview lookup never reads author
+  // ids), so they run in parallel. Neither depends on the other's result,
+  // and both already only ever read data belonging to this one
+  // already-visibility-checked post (postRow is non-null at this point —
+  // see the early `return null` above), so parallelizing exposes nothing
+  // that sequential execution wouldn't have.
+  //
   // At most 1 (post author) + INITIAL_COMMENT_PAGE_SIZE (20) + 1 (viewer)
   // distinct ids before dedup — well under get_public_profiles_by_ids()'s
   // 50-id cap (F5-D1b §4's explicit requirement).
-  const authorLookup = await fetchAuthorsByIds(supabase, authorIds);
+  const [authorLookup, linkPreviewMap] = await Promise.all([
+    fetchAuthorsByIds(supabase, authorIds),
+    firstUrl ? fetchLinkPreviewsByUrls(supabase, [firstUrl]) : Promise.resolve(new Map()),
+  ]);
 
   // F5-D1b §3 case B: the author RPC itself failing is a real backend
   // failure — surfaced the same way a posts/comments query failure is
@@ -144,9 +158,6 @@ async function fetchPostDetail(id: string, viewerId: string | null): Promise<Pos
   if (!authorLookup.ok) {
     throw new Error("FEED_DETAIL_FETCH_FAILED");
   }
-
-  const firstUrl = extractFirstUrl(postRow.content);
-  const linkPreviewMap = firstUrl ? await fetchLinkPreviewsByUrls(supabase, [firstUrl]) : new Map();
 
   const post: PublicPostDetail = {
     id: postRow.id,
@@ -220,8 +231,8 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   // / comments_update_own / delete_own_comment() / likes_insert_own /
   // likes_delete_own) independently re-checks ownership, active status,
   // and block state regardless of what this page renders.
+  const access = await getMemberAccess();
   const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
   const viewerId = "userId" in access ? access.userId : null;
   const canWrite = access.kind === "member_active" || access.kind === "admin_active";
 
@@ -245,33 +256,36 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   // LIVE機能 Phase 4-B: whether this post has photos determines which
   // delete path PostOwnerActions uses (server API vs. the existing direct
   // browser call) — see that component's own doc comment.
+  //
+  // 施策3（2026-10-27パフォーマンス調査）: these two existence checks read
+  // different tables (post_images vs likes) and neither's condition or
+  // result depends on the other, so they run in parallel instead of one
+  // after the other. Each individually still applies the exact same filter
+  // (post_id, and for likes also user_id = this viewer) as before.
+  const [hasImagesResult, initialLikedResult] = await Promise.all([
+    post.post_type === "live_report"
+      ? supabase.from("post_images").select("id").eq("post_id", post.id).limit(1).maybeSingle()
+      : Promise.resolve(null),
+    viewerId
+      ? supabase.from("likes").select("id").eq("post_id", post.id).eq("user_id", viewerId).maybeSingle()
+      : Promise.resolve(null),
+  ]);
+
   let hasImages = false;
-  if (post.post_type === "live_report") {
-    const { data: imageRow, error: imageError } = await supabase
-      .from("post_images")
-      .select("id")
-      .eq("post_id", post.id)
-      .limit(1)
-      .maybeSingle();
-    if (imageError) {
-      console.error("feed detail: post_images existence check failed", imageError.message);
+  if (post.post_type === "live_report" && hasImagesResult) {
+    if (hasImagesResult.error) {
+      console.error("feed detail: post_images existence check failed", hasImagesResult.error.message);
     } else {
-      hasImages = Boolean(imageRow);
+      hasImages = Boolean(hasImagesResult.data);
     }
   }
 
   let initialLiked = false;
-  if (viewerId) {
-    const { data: likeRow, error: likeError } = await supabase
-      .from("likes")
-      .select("id")
-      .eq("post_id", post.id)
-      .eq("user_id", viewerId)
-      .maybeSingle();
-    if (likeError) {
-      console.error("feed detail: own-like lookup failed", likeError.message);
+  if (viewerId && initialLikedResult) {
+    if (initialLikedResult.error) {
+      console.error("feed detail: own-like lookup failed", initialLikedResult.error.message);
     } else {
-      initialLiked = Boolean(likeRow);
+      initialLiked = Boolean(initialLikedResult.data);
     }
   }
 

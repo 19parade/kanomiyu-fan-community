@@ -9,7 +9,7 @@ import { PostCard } from "@/components/feed/PostCard";
 import { PostForm } from "@/components/feed/PostForm";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { SITE_URL } from "@/lib/legal/site-info";
@@ -105,20 +105,24 @@ async function fetchLiveBoardPosts(
   }
 
   const rows = (data ?? []) as unknown as PostListRow[];
-  const authorLookup = await fetchAuthorsByIds(
-    supabase,
-    rows.map((row) => row.author_id)
-  );
+
+  // 施策3（2026-10-27パフォーマンス調査）: independent lookups, run in
+  // parallel — see app/feed/page.tsx's doc comment for the full reasoning.
+  const [authorLookup, linkPreviewMap] = await Promise.all([
+    fetchAuthorsByIds(
+      supabase,
+      rows.map((row) => row.author_id)
+    ),
+    fetchLinkPreviewsForContents(
+      supabase,
+      rows.map((row) => row.content)
+    ),
+  ]);
 
   if (!authorLookup.ok) {
     console.error("live detail: board author batch lookup failed");
     return { ok: false };
   }
-
-  const linkPreviewMap = await fetchLinkPreviewsForContents(
-    supabase,
-    rows.map((row) => row.content)
-  );
 
   return { ok: true, posts: rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap)) };
 }
@@ -179,7 +183,19 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
     notFound();
   }
 
-  const access = await resolveMemberAccess(supabase);
+  // 施策3（2026-10-27パフォーマンス調査）: access（ログイン状態）・参加予定者数
+  // RPC・LIVE掲示板の投稿一覧は、互いに結果を参照しあわない独立した処理のため
+  // 並列実行する。event自体の取得（上）は先行させたまま変更しない — 存在しない
+  // LIVEへのアクセス（404）で、認可チェックや掲示板取得を無駄に走らせない
+  // という既存の順序を崩さないため。参加表明の有無（initialParticipation）は
+  // accessの中身（会員かどうか・userId）に依存するため、このPromise.allの
+  // "後" に従来通り逐次実行する — 認可判定に依存する処理を無条件に並列化し
+  // ないという方針に基づく。
+  const [access, participantCountResult, boardResult] = await Promise.all([
+    getMemberAccess(),
+    supabase.rpc("get_event_participant_count", { target_event_id: id }),
+    fetchLiveBoardPosts(supabase, event.id),
+  ]);
   const isLoggedIn = access.kind !== "unauthenticated";
 
   let initialParticipation: { status: "going" | "attended" | "cancelled" } | null = null;
@@ -201,22 +217,17 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   }
 
   // 参加予定者数（2026-10-28付PM方針）: visibilityに関わらずstatus='going'の
-  // 全行をカウントする get_event_participant_count() RPC を、ページアクセス
-  // 時に一度だけ呼ぶ。失敗してもページ全体は壊さず、表示を0件に留める。
+  // 全行をカウントする get_event_participant_count() RPC。失敗してもページ
+  // 全体は壊さず、表示を0件に留める。
   let participantCount = 0;
-  const { data: participantCountData, error: participantCountError } = await supabase.rpc(
-    "get_event_participant_count",
-    { target_event_id: id }
-  );
-  if (participantCountError) {
-    console.error("live detail: participant count fetch failed", participantCountError.message);
-  } else if (typeof participantCountData === "number") {
-    participantCount = participantCountData;
+  if (participantCountResult.error) {
+    console.error("live detail: participant count fetch failed", participantCountResult.error.message);
+  } else if (typeof participantCountResult.data === "number") {
+    participantCount = participantCountResult.data;
   }
 
   const doorsTimeText = formatEventDateTime(event.doors_time);
   const startTimeText = formatEventDateTime(event.start_time);
-  const boardResult = await fetchLiveBoardPosts(supabase, event.id);
 
   // MusicEvent JSON-LD: restates the exact same facts already shown on this
   // page (title/venue/date/ticket link) in schema.org form, for SEO rich

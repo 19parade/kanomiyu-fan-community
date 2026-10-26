@@ -4,9 +4,8 @@ import { redirect } from "next/navigation";
 
 import { Card } from "@/components/ui/Card";
 import { ContactLink } from "@/components/legal/LegalPage";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 import { LoginForm } from "./login-form";
 
@@ -59,8 +58,7 @@ export default async function LoginPage({
   const { next } = await searchParams;
   const adminNext = resolveNextParam(next);
 
-  const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
+  const access = await getMemberAccess();
 
   if (access.kind === "admin_active") {
     redirect(adminNext ?? ADMIN_PATH);

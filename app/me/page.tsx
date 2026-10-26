@@ -5,7 +5,7 @@ import { LogoutButton } from "@/app/admin/logout-button";
 import { ProfileEditForm } from "@/components/me/ProfileEditForm";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -38,8 +38,8 @@ type OwnProfile = {
  * avatar_url/consent fields are never editable there.
  */
 export default async function MePage() {
+  const access = await getMemberAccess();
   const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
 
   if (access.kind === "unauthenticated" || access.kind === "invalid") {
     redirect("/login");

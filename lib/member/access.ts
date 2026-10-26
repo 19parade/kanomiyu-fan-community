@@ -1,4 +1,7 @@
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
  * Server-only role/status resolution for the common /login flow and for any
@@ -74,3 +77,40 @@ export async function resolveMemberAccess(supabase: SupabaseClient): Promise<Mem
   // status === "active"
   return role === "admin" ? { kind: "admin_active", userId } : { kind: "member_active", userId };
 }
+
+/**
+ * 施策2（2026-10-27パフォーマンス調査）: request-scoped memoization of
+ * resolveMemberAccess(), so components/SiteHeader.tsx (rendered on every
+ * page via the root layout) and that same page's own call both reuse one
+ * result instead of each independently calling auth.getUser() (a real
+ * network round trip to Supabase Auth, not a local JWT decode — see the
+ * doc comment above) and re-querying `profiles`.
+ *
+ * Deliberately takes no arguments and creates its own Supabase client
+ * internally, rather than accepting a caller-supplied `supabase` client as
+ * resolveMemberAccess() does — React.cache() keys its memoization on the
+ * function's arguments, and createSupabaseServerClient() returns a new
+ * client *instance* on every call, so passing a client in as an argument
+ * would give every call site a different cache key and silently defeat the
+ * memoization entirely. With zero arguments, every call within the same
+ * request is guaranteed to hit the same cache entry.
+ *
+ * Safety (explicitly verified, not assumed): per Next.js's own
+ * documentation (node_modules/next/dist/docs/01-app/01-getting-started/
+ * 06-fetching-data.md, "Reusing data with React.cache" — "React.cache is
+ * scoped to the current request only. Each request gets its own
+ * memoization scope with no sharing between requests"), this cannot leak
+ * one user's auth result to a different user's request. It also cannot go
+ * stale *within* a single request (e.g. after a mid-request status change)
+ * because no code path in this app re-authenticates partway through
+ * rendering one response.
+ *
+ * resolveMemberAccess() itself is kept exported and unchanged — any call
+ * site that already holds its own `supabase` client for other queries and
+ * wants to avoid creating a second client instance may still call it
+ * directly; this wrapper is purely an additive, opt-in convenience.
+ */
+export const getMemberAccess = cache(async (): Promise<MemberAccess> => {
+  const supabase = await createSupabaseServerClient();
+  return resolveMemberAccess(supabase);
+});

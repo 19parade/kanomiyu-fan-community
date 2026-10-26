@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { PostForm } from "@/components/feed/PostForm";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -36,8 +36,7 @@ export default async function EditPostPage({ params }: { params: Promise<{ id: s
     redirect(`/feed/${id}`);
   }
 
-  const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
+  const access = await getMemberAccess();
 
   if (access.kind === "unauthenticated" || access.kind === "invalid") {
     redirect("/login");
@@ -46,6 +45,7 @@ export default async function EditPostPage({ params }: { params: Promise<{ id: s
     redirect("/account/status");
   }
 
+  const supabase = await createSupabaseServerClient();
   const { data: post, error } = await supabase
     .from("posts")
     .select("id, content")

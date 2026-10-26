@@ -5,8 +5,7 @@ import { LogoutButton } from "@/app/admin/logout-button";
 import { Card } from "@/components/ui/Card";
 import { ContactLink } from "@/components/legal/LegalPage";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getMemberAccess } from "@/lib/member/access";
 
 export const metadata: Metadata = {
   title: "アカウントの状態",
@@ -27,8 +26,7 @@ export const dynamic = "force-dynamic";
  * only the two fixed, PM-approved notice texts and the contact address.
  */
 export default async function AccountStatusPage() {
-  const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
+  const access = await getMemberAccess();
 
   if (access.kind === "unauthenticated" || access.kind === "invalid") {
     redirect("/login");

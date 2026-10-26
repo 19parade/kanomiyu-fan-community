@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { FeedList } from "@/components/feed/FeedList";
 import { buttonClassName } from "@/components/ui/Button";
-import { resolveMemberAccess } from "@/lib/member/access";
+import { getMemberAccess } from "@/lib/member/access";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
@@ -36,27 +36,41 @@ const FEED_DESCRIPTION = `かのうみゆさんのこと、自由に話そう！
  * session reaches the query as themselves (bidirectional block filtering
  * and community-browsing gating apply via posts' own RLS), while an
  * anonymous visitor degrades to the anon policy. Never service_role.
+ *
+ * 施策3（2026-10-27パフォーマンス調査）: getMemberAccess() and the posts
+ * query below run in parallel via Promise.all rather than sequentially.
+ * This is safe because they are genuinely independent — `access` is used
+ * below only for the "新規投稿" / "ログインして投稿する" button choice, never
+ * as a filter on the posts query. The posts query's own visibility
+ * (published-only, bidirectional block, community-browsing gating) is
+ * enforced entirely by posts' RLS policies evaluating the *same* cookie-
+ * bound session inside Postgres, independent of when (or whether) this
+ * function has finished resolving `access` in JS — so parallelizing them
+ * cannot change which rows are returned.
  */
 export default async function FeedPage() {
   const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
-  const canPost = access.kind === "member_active" || access.kind === "admin_active";
 
-  const { data, error } = await supabase
-    .from("posts")
-    .select(FEED_LIST_SELECT_COLUMNS)
-    .eq("status", "published")
-    // LIVE機能 Phase 3: LIVE掲示板の投稿(post_type='live_report')は対象LIVEの
-    // 掲示板(/live/[id])にのみ表示し、通常フィードには混在させない(PM方針)。
-    // DB・RLSの変更ではなく、このアプリ層のクエリにのみ絞り込みを追加する。
-    .eq("post_type", "normal")
-    // F5-D1b §5: see lib/posts/mapRows.ts's doc comment — without this, an
-    // admin/the post's own author would see their own hidden/deleted
-    // comments leak into comments(count).
-    .eq("comments.status", "published")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(INITIAL_PAGE_SIZE);
+  const [access, postsResult] = await Promise.all([
+    getMemberAccess(),
+    supabase
+      .from("posts")
+      .select(FEED_LIST_SELECT_COLUMNS)
+      .eq("status", "published")
+      // LIVE機能 Phase 3: LIVE掲示板の投稿(post_type='live_report')は対象LIVEの
+      // 掲示板(/live/[id])にのみ表示し、通常フィードには混在させない(PM方針)。
+      // DB・RLSの変更ではなく、このアプリ層のクエリにのみ絞り込みを追加する。
+      .eq("post_type", "normal")
+      // F5-D1b §5: see lib/posts/mapRows.ts's doc comment — without this, an
+      // admin/the post's own author would see their own hidden/deleted
+      // comments leak into comments(count).
+      .eq("comments.status", "published")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(INITIAL_PAGE_SIZE),
+  ]);
+  const canPost = access.kind === "member_active" || access.kind === "admin_active";
+  const { data, error } = postsResult;
 
   const failedMessage = (
     <main className="mx-auto min-w-0 max-w-2xl px-4 py-8 sm:px-6">
@@ -74,10 +88,23 @@ export default async function FeedPage() {
   }
 
   const rows = (data ?? []) as unknown as PostListRow[];
-  const authorLookup = await fetchAuthorsByIds(
-    supabase,
-    rows.map((row) => row.author_id)
-  );
+
+  // 施策3: author batch lookup and link-preview batch lookup are mutually
+  // independent (neither reads the other's result), so they run in
+  // parallel. Both already individually fetch only already-visible rows'
+  // data (author info for authors of posts this viewer can see; link
+  // previews are public metadata about a URL already shown in that visible
+  // post's own content) — parallelizing them exposes nothing new.
+  const [authorLookup, linkPreviewMap] = await Promise.all([
+    fetchAuthorsByIds(
+      supabase,
+      rows.map((row) => row.author_id)
+    ),
+    fetchLinkPreviewsForContents(
+      supabase,
+      rows.map((row) => row.content)
+    ),
+  ]);
 
   // F5-D1b §3 case B: the author RPC failing is a real backend failure —
   // render the same failure state as a posts-query failure, never a page
@@ -86,11 +113,6 @@ export default async function FeedPage() {
     console.error("feed page: author batch lookup failed");
     return failedMessage;
   }
-
-  const linkPreviewMap = await fetchLinkPreviewsForContents(
-    supabase,
-    rows.map((row) => row.content)
-  );
 
   const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap));
 

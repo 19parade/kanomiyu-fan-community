@@ -5,8 +5,7 @@ import { redirect } from "next/navigation";
 import { PostForm } from "@/components/feed/PostForm";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
-import { resolveMemberAccess } from "@/lib/member/access";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getMemberAccess } from "@/lib/member/access";
 
 export const metadata: Metadata = {
   title: "新規投稿",
@@ -26,8 +25,7 @@ export const dynamic = "force-dynamic";
  * impose a narrower rule than the DB itself already enforces.
  */
 export default async function NewPostPage() {
-  const supabase = await createSupabaseServerClient();
-  const access = await resolveMemberAccess(supabase);
+  const access = await getMemberAccess();
 
   if (access.kind === "unauthenticated" || access.kind === "invalid") {
     redirect("/login");

@@ -115,10 +115,19 @@ export async function GET(request: Request) {
   }
 
   const rows = (data ?? []) as unknown as PostListRow[];
-  const authorLookup = await fetchAuthorsByIds(
-    supabase,
-    rows.map((row) => row.author_id)
-  );
+
+  // 施策3（2026-10-27パフォーマンス調査）: independent lookups, run in
+  // parallel — see app/feed/page.tsx's doc comment for the full reasoning.
+  const [authorLookup, linkPreviewMap] = await Promise.all([
+    fetchAuthorsByIds(
+      supabase,
+      rows.map((row) => row.author_id)
+    ),
+    fetchLinkPreviewsForContents(
+      supabase,
+      rows.map((row) => row.content)
+    ),
+  ]);
 
   // F5-D1b §3 case B: the author RPC itself failing is a real backend
   // failure, not "these members don't exist" — never silently render every
@@ -126,11 +135,6 @@ export async function GET(request: Request) {
   if (!authorLookup.ok) {
     return errorResponse("LIST_FAILED", 500);
   }
-
-  const linkPreviewMap = await fetchLinkPreviewsForContents(
-    supabase,
-    rows.map((row) => row.content)
-  );
 
   const posts = rows.map((row) => mapPostListRow(row, authorLookup.authors, linkPreviewMap));
 
