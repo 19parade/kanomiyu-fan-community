@@ -7,11 +7,6 @@ import { PostContentText } from "@/components/feed/PostContentText";
 import { formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
 import type { PublicPostListItem } from "@/lib/posts/types";
 
-const POST_TYPE_LABEL: Record<string, string> = {
-  normal: "通常投稿",
-  live_report: "LIVEレポート",
-};
-
 /**
  * F5-D1: read-only post card for /feed. 2026-10-27 design review: the card
  * still navigates to /feed/[id] as a whole, but via an absolutely
@@ -40,8 +35,11 @@ export function PostCard({ post }: { post: PublicPostListItem }) {
           <p className="truncate font-bold">{authorLabel}</p>
           {post.author ? <p className="truncate text-sm text-muted">@{post.author.username}</p> : null}
         </div>
+        {/* 2026-10-27 PM方針: タップで画面遷移することが分かりづらいとの
+            指摘を受け、投稿種別（通常投稿/LIVEレポート）の代わりに
+            操作の説明として「コメントする」を表示する。 */}
         <span className="shrink-0 rounded-full bg-foreground/5 px-2 py-1 text-xs font-bold text-muted">
-          {POST_TYPE_LABEL[post.post_type] ?? post.post_type}
+          コメントする
         </span>
       </div>
 
