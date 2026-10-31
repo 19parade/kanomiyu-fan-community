@@ -191,9 +191,10 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   // accessの中身（会員かどうか・userId）に依存するため、このPromise.allの
   // "後" に従来通り逐次実行する — 認可判定に依存する処理を無条件に並列化し
   // ないという方針に基づく。
-  const [access, participantCountResult, boardResult] = await Promise.all([
+  const [access, participantCountResult, attendeeCountResult, boardResult] = await Promise.all([
     getMemberAccess(),
     supabase.rpc("get_event_participant_count", { target_event_id: id }),
+    supabase.rpc("get_event_attendee_count", { target_event_id: id }),
     fetchLiveBoardPosts(supabase, event.id),
   ]);
   const isLoggedIn = access.kind !== "unauthenticated";
@@ -224,6 +225,19 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
     console.error("live detail: participant count fetch failed", participantCountResult.error.message);
   } else if (typeof participantCountResult.data === "number") {
     participantCount = participantCountResult.data;
+  }
+
+  // 参加者数（2026-10-31付PM方針）: 開催終了したLIVEでの「参加者：○名」
+  // 表示用。visibilityに関わらずstatus='attended'の全行をカウントする
+  // get_event_attendee_count() RPC（上と同じ理由で失敗時は0件に留める）。
+  // どちらの数値（参加予定 or 参加者）を実際に表示するかは、開催終了判定
+  // を既に持つ ParticipationStatus 側（Client Component）に委ねる —
+  // 「開催日時を過ぎているか」の判定をサーバー側で重複させないため。
+  let attendeeCount = 0;
+  if (attendeeCountResult.error) {
+    console.error("live detail: attendee count fetch failed", attendeeCountResult.error.message);
+  } else if (typeof attendeeCountResult.data === "number") {
+    attendeeCount = attendeeCountResult.data;
   }
 
   const doorsTimeText = formatEventDateTime(event.doors_time);
@@ -338,6 +352,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         initialParticipation={initialParticipation}
         isLoggedIn={isLoggedIn}
         participantCount={participantCount}
+        attendeeCount={attendeeCount}
       />
 
       <section className="mt-6 rounded-2xl border border-border bg-surface p-5">

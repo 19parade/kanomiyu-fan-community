@@ -50,6 +50,7 @@ export function ParticipationStatus({
   initialParticipation,
   isLoggedIn,
   participantCount,
+  attendeeCount,
 }: {
   eventId: string;
   eventStatus: "public" | "cancelled";
@@ -59,8 +60,12 @@ export function ParticipationStatus({
   // get_event_participant_count() RPC の結果（status='going'の全件数、
   // visibilityは問わない — PM方針2026-10-28）。ページ表示時点のスナップ
   // ショットで、この場で参加予定にしても即座には増減しない（再読み込みで
-  // 反映される）。
+  // 反映される）。開催予定LIVEの「参加予定：○名」表示に使う。
   participantCount: number;
+  // get_event_attendee_count() RPC の結果（status='attended'の全件数、
+  // 同じくvisibilityは問わない — PM方針2026-10-31）。開催終了LIVEの
+  // 「参加者：○名」表示に使う。
+  attendeeCount: number;
 }) {
   const [participation, setParticipation] = useState(initialParticipation);
   const [pending, setPending] = useState(false);
@@ -79,6 +84,9 @@ export function ParticipationStatus({
   // する」is hidden (only 参加済みにする remains) and the headline count
   // switches from 参加予定 to 参加者.
   const [canAttend] = useState(() => new Date(eventDate).getTime() <= Date.now());
+  // 開催終了後は「参加者（参加済み件数）」、開催前は「参加予定（going件数）」
+  // — ラベルの切り替えと同じ canAttend を使い、両者が食い違わないようにする。
+  const displayCount = canAttend ? attendeeCount : participantCount;
 
   if (!isLoggedIn) {
     return (
@@ -86,7 +94,7 @@ export function ParticipationStatus({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-bold">参加ステータス</h2>
           <span className="text-sm text-muted">
-            {canAttend ? "参加者" : "参加予定"}：{participantCount}名
+            {canAttend ? "参加者" : "参加予定"}：{displayCount}名
           </span>
         </div>
         <p className="mt-2 text-sm text-muted">
@@ -150,7 +158,7 @@ export function ParticipationStatus({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold">参加ステータス</h2>
         <span className="text-sm text-muted">
-          {canAttend ? "参加者" : "参加予定"}：{participantCount}名
+          {canAttend ? "参加者" : "参加予定"}：{displayCount}名
         </span>
       </div>
 
