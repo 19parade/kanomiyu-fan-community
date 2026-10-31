@@ -20,6 +20,17 @@ export function PostImageLightboxGrid({ images }: { images: PostImageDisplayItem
     return null;
   }
 
+  // Wrap around at both ends (common lightbox behavior) — never reached
+  // with 0 photos (early return above) or while the lightbox is closed
+  // (both buttons and the keyboard handler below only exist/fire once
+  // openIndex is a real index).
+  function goToPrev() {
+    setOpenIndex((current) => (current === null ? current : (current - 1 + images.length) % images.length));
+  }
+  function goToNext() {
+    setOpenIndex((current) => (current === null ? current : (current + 1) % images.length));
+  }
+
   return (
     <>
       <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -44,6 +55,20 @@ export function PostImageLightboxGrid({ images }: { images: PostImageDisplayItem
           aria-label="写真の拡大表示"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
           onClick={() => setOpenIndex(null)}
+          // Lets ←/→ move between photos and Esc close, without a mandatory
+          // click first — focus goes on this div on open via autoFocus below
+          // (it's the only focusable element here other than the buttons).
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              goToPrev();
+            } else if (event.key === "ArrowRight") {
+              goToNext();
+            } else if (event.key === "Escape") {
+              setOpenIndex(null);
+            }
+          }}
+          autoFocus
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -52,6 +77,35 @@ export function PostImageLightboxGrid({ images }: { images: PostImageDisplayItem
             className="max-h-full max-w-full rounded-lg object-contain"
             onClick={(event) => event.stopPropagation()}
           />
+          {images.length > 1 ? (
+            <>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  goToPrev();
+                }}
+                aria-label="前の写真"
+                className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-xl font-bold text-white"
+              >
+                ◀
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  goToNext();
+                }}
+                aria-label="次の写真"
+                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-xl font-bold text-white"
+              >
+                ▶
+              </button>
+              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-bold text-white">
+                {openIndex + 1} / {images.length}
+              </p>
+            </>
+          ) : null}
           <button
             type="button"
             onClick={() => setOpenIndex(null)}
