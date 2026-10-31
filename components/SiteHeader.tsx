@@ -1,11 +1,8 @@
 import Link from "next/link";
 
-import { buttonClassName } from "@/components/ui/Button";
+import { SiteNav } from "@/components/SiteNav";
 import { SITE_NAME } from "@/lib/legal/site-info";
 import { getMemberAccess } from "@/lib/member/access";
-
-const NAV_LINK_CLASS =
-  "inline-block rounded-full px-3 py-2 text-sm font-bold text-foreground hover:bg-background";
 
 /**
  * Site-wide header (bug-fix pass, 2026-10-22). Server Component: the
@@ -29,6 +26,11 @@ const NAV_LINK_CLASS =
  * of which links to show here; where someone in a restricted state actually
  * lands after clicking /me or /feed is still decided solely by those pages'
  * own existing redirect logic, not duplicated here.
+ *
+ * The nav itself is rendered by the SiteNav Client Component (needs
+ * usePathname() for the current-page highlight, which an async Server
+ * Component can't call) — only the signed-in/out boolean crosses that
+ * boundary, so the auth check itself stays server-side.
  */
 export async function SiteHeader() {
   const access = await getMemberAccess();
@@ -40,47 +42,7 @@ export async function SiteHeader() {
         <Link href="/" className="text-sm font-bold text-foreground">
           {SITE_NAME}
         </Link>
-        <nav aria-label="メインナビゲーション">
-          <ul className="flex flex-wrap items-center gap-1 sm:gap-2">
-            <li>
-              <Link href="/" className={NAV_LINK_CLASS}>
-                ホーム
-              </Link>
-            </li>
-            <li>
-              <Link href="/live" className={`${NAV_LINK_CLASS} text-brand`}>
-                LIVE
-              </Link>
-            </li>
-            {isSignedIn ? (
-              <>
-                <li>
-                  <Link href="/feed" className={NAV_LINK_CLASS}>
-                    みんなの掲示板
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/me" className={buttonClassName("secondary", "px-4 py-2 text-sm")}>
-                    マイページ
-                  </Link>
-                </li>
-              </>
-            ) : (
-              <>
-                <li>
-                  <Link href="/signup" className={buttonClassName("secondary", "px-4 py-2 text-sm")}>
-                    会員登録
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/login" className={buttonClassName("ghost", "px-4 py-2 text-sm")}>
-                    ログイン
-                  </Link>
-                </li>
-              </>
-            )}
-          </ul>
-        </nav>
+        <SiteNav isSignedIn={isSignedIn} />
       </div>
     </header>
   );
