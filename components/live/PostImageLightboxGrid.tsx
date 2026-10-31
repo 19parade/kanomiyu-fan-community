@@ -7,6 +7,23 @@ export type PostImageDisplayItem = {
   url: string;
 };
 
+// Plain-text ◀/▶ render as colorful emoji glyphs on iOS/Android's default
+// font (user report, 2026-10-31) instead of the plain triangle PCs show —
+// an inline SVG renders identically everywhere, so it replaces them here
+// rather than trying to force text presentation with a variation selector.
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" aria-hidden="true">
+      <path
+        d={direction === "left" ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"}
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /**
  * LIVE機能 Phase 4-B: thumbnail grid + simple lightbox for a post's photos.
  * `url` values are already-signed, short-lived URLs resolved server-side
@@ -86,9 +103,9 @@ export function PostImageLightboxGrid({ images }: { images: PostImageDisplayItem
                   goToPrev();
                 }}
                 aria-label="前の写真"
-                className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-xl font-bold text-white"
+                className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 p-3 text-white"
               >
-                ◀
+                <ChevronIcon direction="left" />
               </button>
               <button
                 type="button"
@@ -97,9 +114,9 @@ export function PostImageLightboxGrid({ images }: { images: PostImageDisplayItem
                   goToNext();
                 }}
                 aria-label="次の写真"
-                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-xl font-bold text-white"
+                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/60 p-3 text-white"
               >
-                ▶
+                <ChevronIcon direction="right" />
               </button>
               <p className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-bold text-white">
                 {openIndex + 1} / {images.length}
