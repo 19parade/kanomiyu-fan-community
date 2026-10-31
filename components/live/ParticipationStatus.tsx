@@ -72,6 +72,12 @@ export function ParticipationStatus({
   // the event's start time can simply be reloaded). Hooks must run
   // unconditionally, so this sits above the isLoggedIn early return even
   // though the logged-out branch never reads it.
+  //
+  // Also doubles as "has this LIVE already ended" (same event_date < now()
+  // boundary app/live/(list)/page.tsx uses to split 開催予定/開催終了 — see
+  // that page's own query) per PM方針2026-10-31: once ended, 「参加予定に
+  // する」is hidden (only 参加済みにする remains) and the headline count
+  // switches from 参加予定 to 参加者.
   const [canAttend] = useState(() => new Date(eventDate).getTime() <= Date.now());
 
   if (!isLoggedIn) {
@@ -79,7 +85,9 @@ export function ParticipationStatus({
       <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-bold">参加ステータス</h2>
-          <span className="text-sm text-muted">参加予定：{participantCount}名</span>
+          <span className="text-sm text-muted">
+            {canAttend ? "参加者" : "参加予定"}：{participantCount}名
+          </span>
         </div>
         <p className="mt-2 text-sm text-muted">
           <Link href={`/login?next=/live/${eventId}`} className="font-bold text-brand underline-offset-2 hover:underline">
@@ -141,7 +149,9 @@ export function ParticipationStatus({
     <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold">参加ステータス</h2>
-        <span className="text-sm text-muted">参加予定：{participantCount}名</span>
+        <span className="text-sm text-muted">
+          {canAttend ? "参加者" : "参加予定"}：{participantCount}名
+        </span>
       </div>
 
       {eventStatus === "cancelled" ? (
@@ -171,15 +181,17 @@ export function ParticipationStatus({
         <>
           <p className="mt-2 text-sm">現在の状態: {currentLabel}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void updateStatus("going")}
-              disabled={pending}
-              aria-pressed={participation?.status === "going"}
-              className={buttonClassName(participation?.status === "going" ? "primary" : "secondary", "px-4 py-2 text-sm")}
-            >
-              参加予定にする
-            </button>
+            {!canAttend ? (
+              <button
+                type="button"
+                onClick={() => void updateStatus("going")}
+                disabled={pending}
+                aria-pressed={participation?.status === "going"}
+                className={buttonClassName(participation?.status === "going" ? "primary" : "secondary", "px-4 py-2 text-sm")}
+              >
+                参加予定にする
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void updateStatus("attended")}
