@@ -253,9 +253,12 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   // regardless of their current profile status). Only queried when
   // authenticated; anonymous visitors are always initialLiked=false and
   // see the login-prompt branch in LikeButton instead.
-  // LIVE機能 Phase 4-B: whether this post has photos determines which
-  // delete path PostOwnerActions uses (server API vs. the existing direct
-  // browser call) — see that component's own doc comment.
+  // 投稿の写真有無は、本人の削除時にPostOwnerActionsがどちらの削除経路
+  // （サーバーAPI vs. 既存の直接ブラウザ呼び出し）を使うか決める —
+  // 詳細はそのコンポーネント自身のdoc commentを参照。2026-11-01より
+  // post_type='normal'（みんなの掲示板）にも写真投稿機能を追加したため
+  // （supabase/migrations/20261101000000_create_post_with_images.sqlの
+  // doc comment参照）、live_reportに限定せず全post_typeで確認する。
   //
   // 施策3（2026-10-27パフォーマンス調査）: these two existence checks read
   // different tables (post_images vs likes) and neither's condition or
@@ -263,21 +266,17 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
   // after the other. Each individually still applies the exact same filter
   // (post_id, and for likes also user_id = this viewer) as before.
   const [hasImagesResult, initialLikedResult] = await Promise.all([
-    post.post_type === "live_report"
-      ? supabase.from("post_images").select("id").eq("post_id", post.id).limit(1).maybeSingle()
-      : Promise.resolve(null),
+    supabase.from("post_images").select("id").eq("post_id", post.id).limit(1).maybeSingle(),
     viewerId
       ? supabase.from("likes").select("id").eq("post_id", post.id).eq("user_id", viewerId).maybeSingle()
       : Promise.resolve(null),
   ]);
 
   let hasImages = false;
-  if (post.post_type === "live_report" && hasImagesResult) {
-    if (hasImagesResult.error) {
-      console.error("feed detail: post_images existence check failed", hasImagesResult.error.message);
-    } else {
-      hasImages = Boolean(hasImagesResult.data);
-    }
+  if (hasImagesResult.error) {
+    console.error("feed detail: post_images existence check failed", hasImagesResult.error.message);
+  } else {
+    hasImages = Boolean(hasImagesResult.data);
   }
 
   let initialLiked = false;
@@ -337,7 +336,7 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
           <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} />
         ) : null}
 
-        {post.post_type === "live_report" ? <PostImageGallery postId={post.id} /> : null}
+        <PostImageGallery postId={post.id} />
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
           <span>{formatPostDate(post.created_at)}</span>

@@ -36,9 +36,12 @@ const UPLOAD_ERROR_MESSAGES: Record<string, string> = {
 };
 
 // Exact RAISE EXCEPTION text from create_live_report_post() (supabase/
-// migrations/20261026000000_post_images.sql) — matched verbatim, same
-// convention as lib/events/errors.ts's mapEventDbError().
-const LIVE_POST_ERROR_MESSAGES: Record<string, string> = {
+// migrations/20261026000000_post_images.sql) and create_post_with_images()
+// (20261101000000_create_post_with_images.sql, which shares the same three
+// POST_NOT_AUTHORIZED/TOO_MANY_POST_IMAGES/POST_IMAGE_NOT_OWNED codes
+// verbatim) — matched verbatim, same convention as lib/events/errors.ts's
+// mapEventDbError().
+const POST_WITH_IMAGES_ERROR_MESSAGES: Record<string, string> = {
   POST_NOT_AUTHORIZED: "投稿できませんでした。ログイン状態をご確認ください。",
   EVENT_NOT_AVAILABLE_FOR_POSTING: "このLIVEには投稿できません。",
   TOO_MANY_POST_IMAGES: "画像は4枚までです。",
@@ -65,6 +68,12 @@ type SelectedImage = {
  * `post_type: "live_report"` and the target LIVE's `event_id` to the insert
  * payload — posts_insert_own (M18) is what actually authorizes which event a
  * live_report may reference; this component does not duplicate that check.
+ * `mode: "create"` optionally attaches photos too (2026-11-01, extending
+ * LIVE掲示板's Phase 4-B photo feature to みんなの掲示板 — see
+ * supabase/migrations/20261101000000_create_post_with_images.sql's doc
+ * comment) via the same upload-then-atomic-RPC pattern as create-live,
+ * only reached when photos are actually attached; a photo-less "create"
+ * submit still goes through the original direct `.insert()` unchanged.
  * Mirrors components/me/ProfileEditForm.tsx's established
  * pattern closely: client-side pre-validation mirroring the DB CHECK
  * constraint, an explicit minimal payload (never a spread of broader
@@ -166,8 +175,9 @@ export function PostForm(props: PostFormProps) {
     return () => clearTimeout(timer);
   }, [linkPreviewUrl, content]);
 
-  // Image attachment is only offered in create-live mode (LIVE掲示板専用。
-  // 通常フィードへの画像投稿は追加しない — PM要件).
+  // Image attachment (2026-11-01): offered in both create-live and create
+  // mode now — see this component's own doc comment above for why the
+  // former "通常フィードへの画像投稿は追加しない" restriction was lifted.
   function handleFilesSelected(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     // Always clear the input value so selecting the exact same file again
@@ -234,6 +244,52 @@ export function PostForm(props: PostFormProps) {
     }
 
     try {
+      if (props.mode === "create" && images.length > 0) {
+        // Photos attached: same upload-then-atomic-RPC pattern as
+        // create-live below (see this component's own doc comment) —
+        // create_post_with_images() is create_live_report_post()'s
+        // non-LIVE counterpart (supabase/migrations/
+        // 20261101000000_create_post_with_images.sql).
+        const imageKeys: string[] = [];
+        for (let i = 0; i < images.length; i += 1) {
+          setUploadStatus(`画像をアップロード中... (${i + 1}/${images.length})`);
+          const reencoded = await reencodeImageFile(images[i].file);
+          if (!reencoded.ok) {
+            setError("画像を処理できませんでした。別の画像でお試しください。");
+            setPending(false);
+            setUploadStatus(null);
+            submittingRef.current = false;
+            return;
+          }
+          const uploadResult = await uploadPostImage(supabase, reencoded.blob, reencoded.mime);
+          if (!uploadResult.ok) {
+            setError(UPLOAD_ERROR_MESSAGES[uploadResult.error] ?? "画像をアップロードできませんでした。");
+            setPending(false);
+            setUploadStatus(null);
+            submittingRef.current = false;
+            return;
+          }
+          imageKeys.push(uploadResult.key);
+        }
+        setUploadStatus(null);
+
+        const { data: newPostId, error: rpcError } = await supabase.rpc("create_post_with_images", {
+          content: normalized,
+          image_keys: imageKeys,
+        });
+
+        if (rpcError || !newPostId) {
+          console.error("post form: create_post_with_images failed", rpcError?.message);
+          setError(POST_WITH_IMAGES_ERROR_MESSAGES[rpcError?.message ?? ""] ?? "投稿できませんでした。しばらくしてから再度お試しください。");
+          setPending(false);
+          submittingRef.current = false;
+          return;
+        }
+
+        router.push(`/feed/${newPostId}`);
+        return;
+      }
+
       if (props.mode === "create") {
         const { data, error: insertError } = await supabase
           .from("posts")
@@ -301,7 +357,7 @@ export function PostForm(props: PostFormProps) {
 
         if (rpcError) {
           console.error("post form: create_live_report_post failed", rpcError.message);
-          setError(LIVE_POST_ERROR_MESSAGES[rpcError.message] ?? "投稿できませんでした。しばらくしてから再度お試しください。");
+          setError(POST_WITH_IMAGES_ERROR_MESSAGES[rpcError.message] ?? "投稿できませんでした。しばらくしてから再度お試しください。");
           setPending(false);
           submittingRef.current = false;
           return;
@@ -393,7 +449,7 @@ export function PostForm(props: PostFormProps) {
         {linkPreviewUrl && linkPreview ? <LinkPreviewCard url={linkPreviewUrl} preview={linkPreview} /> : null}
       </div>
 
-      {props.mode === "create-live" ? (
+      {props.mode === "create-live" || props.mode === "create" ? (
         <div>
           <label className="block text-sm font-bold">写真（任意、最大{MAX_POST_IMAGES}枚）</label>
           <p className="mt-1 text-xs text-muted">
