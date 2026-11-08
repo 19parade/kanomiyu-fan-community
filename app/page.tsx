@@ -2,9 +2,32 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 
+import { HeroCarousel, type HeroImage } from "@/components/HeroCarousel";
 import { Card } from "@/components/ui/Card";
 import { SITE_NAME } from "@/lib/legal/site-info";
 import { buildPageMetadata } from "@/lib/seo/metadata";
+
+// トップページのメインビジュアル（2026-11-08付PM方針）: 複数枚から
+// 選べるカーソルにする。先頭（配列の0番目）がデフォルト表示される
+// 画像 — HeroCarousel自身はindex 0から始まる以外に「どれがデフォルト
+// か」を知らないので、並び順そのものが指定の決定方法。
+const HOMEPAGE_HERO_IMAGES: HeroImage[] = [
+  {
+    src: "/images/hero-vocal-closeup.png",
+    alt: "マイクを持って歌うかのうみゆさん",
+    objectPosition: "50% 15%",
+  },
+  {
+    src: "/images/hero-kanomiyu.jpg",
+    alt: "ステージで観客に手を振るかのうみゆさん",
+    objectPosition: "50% 20%",
+  },
+  {
+    src: "/images/hero-group-bow.webp",
+    alt: "LIVE終演後、バンドメンバーと手を取り合うかのうみゆさん",
+    objectPosition: "50% 35%",
+  },
+];
 
 // SEO改善（2026-11-08付PM方針）: トップページのtitleタグに検索されやすい
 // 語句（「LIVE情報・掲示板」）を含める。
@@ -80,19 +103,9 @@ export default function Home() {
   return (
     <div className="flex flex-1 flex-col">
       <section className="relative overflow-hidden sm:mx-4 sm:mt-4 sm:rounded-3xl">
-        <div className="relative aspect-[3/4] w-full sm:aspect-[16/9] lg:aspect-[21/9]">
-          <Image
-            src="/images/hero-kanomiyu.jpg"
-            alt="ステージで観客に手を振るかのうみゆさん"
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover object-[50%_20%]"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-        </div>
+        <HeroCarousel images={HOMEPAGE_HERO_IMAGES} />
 
-        <div className="absolute inset-x-0 bottom-0 px-4 pb-6 sm:px-8 sm:pb-8">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-6 sm:px-8 sm:pb-8">
           <span className="inline-block rounded-full bg-black/50 px-3 py-1 text-xs font-bold text-white backdrop-blur-sm">
             非公式ファンコミュニティ
           </span>
