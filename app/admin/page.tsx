@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 const SECTIONS = [
   { href: "/admin/music", title: "楽曲管理", description: "楽曲の登録・編集・公開状態の管理を行います。" },
   { href: "/admin/events", title: "LIVE管理", description: "LIVE情報の登録・編集・公開・中止の管理を行います。" },
+  { href: "/admin/news", title: "お知らせ管理", description: "WHAT'S NEWに表示する新着情報の登録・編集・削除を行います。" },
   { href: "/admin/reports", title: "通報管理", description: "寄せられた通報内容の確認・対応を行います。" },
 ] as const;
 

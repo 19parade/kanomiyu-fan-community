@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { HeroCarousel, type HeroImage } from "@/components/HeroCarousel";
 import { Card } from "@/components/ui/Card";
+import { WhatsNew } from "@/components/WhatsNew";
 import { SITE_NAME } from "@/lib/legal/site-info";
 import { buildPageMetadata } from "@/lib/seo/metadata";
 
@@ -117,6 +118,8 @@ export default function Home() {
           </p>
         </div>
       </section>
+
+      <WhatsNew />
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10 sm:px-6">
         <Card className="overflow-hidden p-6 sm:p-8">

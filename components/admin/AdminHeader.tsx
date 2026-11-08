@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/admin", label: "管理画面トップ" },
   { href: "/admin/music", label: "楽曲管理" },
   { href: "/admin/events", label: "LIVE管理" },
+  { href: "/admin/news", label: "お知らせ管理" },
   { href: "/admin/reports", label: "通報管理" },
 ] as const;
 
