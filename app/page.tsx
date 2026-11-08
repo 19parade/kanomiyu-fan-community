@@ -6,11 +6,26 @@ import { Card } from "@/components/ui/Card";
 import { SITE_NAME } from "@/lib/legal/site-info";
 import { buildPageMetadata } from "@/lib/seo/metadata";
 
-export const metadata: Metadata = buildPageMetadata({
-  description:
-    "かのうみゆさんのLIVE情報・楽曲情報をまとめた非公式ファンコミュニティ。LIVEの参加表明やレポート共有、ファン同士の投稿・交流ができます。",
-  path: "/",
-});
+// SEO改善（2026-11-08付PM方針）: トップページのtitleタグに検索されやすい
+// 語句（「LIVE情報・掲示板」）を含める。
+const HOMEPAGE_TITLE = "かのうみゆ | LIVE情報・掲示板 - かのうみゆファンコミュニティ";
+const HOMEPAGE_DESCRIPTION =
+  "かのうみゆさんのLIVE情報・楽曲情報をまとめた非公式ファンコミュニティ。LIVEの参加表明やレポート共有、ファン同士の投稿・交流ができます。";
+
+export const metadata: Metadata = {
+  ...buildPageMetadata({
+    title: HOMEPAGE_TITLE,
+    description: HOMEPAGE_DESCRIPTION,
+    path: "/",
+  }),
+  // buildPageMetadata()'s `title` passthrough is a plain string, which the
+  // root layout's `%s | ${SITE_NAME}` template would then run on top of —
+  // HOMEPAGE_TITLE already ends in "- かのうみゆファンコミュニティ" itself,
+  // so that would double the site name. `absolute` bypasses the template
+  // for the actual <title> tag; openGraph.title/twitter.title above (set
+  // via the `title` param) are unaffected since Next never templates those.
+  title: { absolute: HOMEPAGE_TITLE },
+};
 
 // PM方針 2026-10-25: トップページの運営者からのお知らせ文。文言は運営者から
 // の原文のまま一言一句変更しない — 2026-10-31のデザイン改修で、従来の単一

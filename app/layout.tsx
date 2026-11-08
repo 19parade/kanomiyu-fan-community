@@ -42,6 +42,17 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  // SEO改善（2026-11-08付PM方針）: デフォルトでもindex/follow扱いだが、
+  // 画像検索での表示機会を広げるmax-image-preview:largeを明示する。
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+    },
+  },
   openGraph: {
     type: "website",
     locale: "ja_JP",
@@ -66,13 +77,42 @@ export const metadata: Metadata = {
   },
 };
 
+// SEO改善（2026-11-08付PM方針、競合サイトkanomiyu.comとの比較調査より）:
+// WebSiteのみだったJSON-LDに、かのうみゆさん本人のPersonエンティティを
+// 追加する。表記ゆれ（alternateName）と公式SNS（sameAs）をあわせて
+// 明示することで、Googleがこのサイトを「かのうみゆさん本人に関する
+// 情報源」として認識しやすくする、一般的なエンティティSEOの手法。
+// sameAs先はいずれもかのうみゆさんご本人の公開済み公式アカウント
+// （競合サイトのJSON-LDで公開されている情報と同一）であり、新規に
+// 何かを主張・作成するものではない。
+const KANOMIYU_PERSON_ID = `${SITE_URL}/#kanomiyu`;
+
+const KANOMIYU_PERSON_JSON_LD = {
+  "@type": "Person",
+  "@id": KANOMIYU_PERSON_ID,
+  name: "かのうみゆ",
+  alternateName: ["かのう みゆ", "KANO MIYU", "Kano Miyu", "Kanou Miyu", "카노미유", "카노우 미유"],
+  sameAs: [
+    "https://www.instagram.com/miyu_allright/",
+    "https://www.tiktok.com/@miyu_allright",
+    "https://x.com/miyu_allright",
+    "https://www.youtube.com/channel/UCIPBUGqKm4BEEoeJQGiX3Sw",
+  ],
+};
+
 const WEBSITE_JSON_LD = {
   "@context": "https://schema.org",
-  "@type": "WebSite",
-  name: SITE_NAME,
-  url: SITE_URL,
-  description: SITE_DESCRIPTION,
-  inLanguage: "ja",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      name: SITE_NAME,
+      url: SITE_URL,
+      description: SITE_DESCRIPTION,
+      inLanguage: "ja",
+      mainEntity: { "@id": KANOMIYU_PERSON_ID },
+    },
+    KANOMIYU_PERSON_JSON_LD,
+  ],
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
