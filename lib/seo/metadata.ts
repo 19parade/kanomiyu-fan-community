@@ -1,8 +1,40 @@
 import type { Metadata } from "next";
 
-import { SITE_NAME } from "@/lib/legal/site-info";
+import { OPERATOR_NAME, SITE_NAME, SITE_URL } from "@/lib/legal/site-info";
 
 const DEFAULT_IMAGE = "/images/hero-kanomiyu.jpg";
+
+// SEO改善（2026-11-08付PM方針）: かのうみゆさん本人・運営者それぞれの
+// JSON-LDエンティティを、サイト全体でこの1箇所だけで定義する。
+// app/layout.tsxのサイト全体JSON-LD（@graphの実体そのもの）と、
+// app/live/[id]/page.tsx・app/music/[id]/page.tsxの個別ページJSON-LD
+// （`{"@id": KANOMIYU_PERSON_ID}`という参照のみ）の両方がこれを使う —
+// 同じ@id文字列を複数箇所に直接書くと将来の変更時に食い違う危険が
+// あるため、定数として一元化する。
+export const KANOMIYU_PERSON_ID = `${SITE_URL}/#kanomiyu`;
+export const OPERATOR_ORGANIZATION_ID = `${SITE_URL}/#organization`;
+
+// sameAs先はいずれもかのうみゆさんご本人の公開済み公式アカウント
+// （競合サイトkanomiyu.comのJSON-LDで公開されている情報と同一）であり、
+// 新規に何かを主張・作成するものではない。
+export const KANOMIYU_PERSON_JSON_LD = {
+  "@type": "Person",
+  "@id": KANOMIYU_PERSON_ID,
+  name: "かのうみゆ",
+  alternateName: ["かのう みゆ", "KANO MIYU", "Kano Miyu", "Kanou Miyu", "카노미유", "카노우 미유"],
+  sameAs: [
+    "https://www.instagram.com/miyu_allright/",
+    "https://www.tiktok.com/@miyu_allright",
+    "https://x.com/miyu_allright",
+    "https://www.youtube.com/channel/UCIPBUGqKm4BEEoeJQGiX3Sw",
+  ],
+};
+
+export const OPERATOR_ORGANIZATION_JSON_LD = {
+  "@type": "Organization",
+  "@id": OPERATOR_ORGANIZATION_ID,
+  name: OPERATOR_NAME,
+};
 
 /**
  * Builds a page's full `openGraph`/`twitter`/`alternates` metadata in one

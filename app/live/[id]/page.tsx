@@ -15,7 +15,7 @@ import { fetchLinkPreviewsForContents } from "@/lib/posts/linkPreviews";
 import { SITE_URL } from "@/lib/legal/site-info";
 import { FEED_LIST_SELECT_COLUMNS, mapPostListRow, type PostListRow } from "@/lib/posts/mapRows";
 import type { PublicPostListItem } from "@/lib/posts/types";
-import { buildPageMetadata } from "@/lib/seo/metadata";
+import { buildPageMetadata, KANOMIYU_PERSON_ID } from "@/lib/seo/metadata";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const LIVE_BOARD_PAGE_SIZE = 20;
@@ -247,6 +247,13 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   // page (title/venue/date/ticket link) in schema.org form, for SEO rich
   // results and AI answer engines. Never adds data the page doesn't already
   // publicly display.
+  //
+  // SEO改善（2026-11-08付PM方針）: performerは独立したPerson記述ではなく、
+  // app/layout.tsxのサイト全体JSON-LDが定義する同一のPersonエンティティ
+  // を`@id`参照する。Googleは同一ページ上の複数のJSON-LD <script>を
+  // ひとつのグラフとして解決するため、これによりこのイベントの
+  // 出演者が、サイト全体で認識されているかのうみゆさんの表記ゆれ・
+  // 公式SNS情報と同一人物であることを明示的に結び付けられる。
   const eventJsonLd = {
     "@context": "https://schema.org",
     "@type": "MusicEvent",
@@ -261,10 +268,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
       "@type": "Place",
       name: event.venue,
     },
-    performer: {
-      "@type": "Person",
-      name: "かのうみゆ",
-    },
+    performer: { "@id": KANOMIYU_PERSON_ID },
     ...(imageUrl ? { image: [imageUrl] } : {}),
     ...(event.description ? { description: event.description } : {}),
     ...(event.ticket_url

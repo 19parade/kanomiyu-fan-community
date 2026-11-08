@@ -7,6 +7,12 @@ import "./globals.css";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SITE_NAME, SITE_URL } from "@/lib/legal/site-info";
+import {
+  KANOMIYU_PERSON_ID,
+  KANOMIYU_PERSON_JSON_LD,
+  OPERATOR_ORGANIZATION_ID,
+  OPERATOR_ORGANIZATION_JSON_LD,
+} from "@/lib/seo/metadata";
 
 const GTM_CONTAINER_ID = "GTM-KQPQFW8W";
 
@@ -78,28 +84,15 @@ export const metadata: Metadata = {
 };
 
 // SEO改善（2026-11-08付PM方針、競合サイトkanomiyu.comとの比較調査より）:
-// WebSiteのみだったJSON-LDに、かのうみゆさん本人のPersonエンティティを
-// 追加する。表記ゆれ（alternateName）と公式SNS（sameAs）をあわせて
-// 明示することで、Googleがこのサイトを「かのうみゆさん本人に関する
-// 情報源」として認識しやすくする、一般的なエンティティSEOの手法。
-// sameAs先はいずれもかのうみゆさんご本人の公開済み公式アカウント
-// （競合サイトのJSON-LDで公開されている情報と同一）であり、新規に
-// 何かを主張・作成するものではない。
-const KANOMIYU_PERSON_ID = `${SITE_URL}/#kanomiyu`;
-
-const KANOMIYU_PERSON_JSON_LD = {
-  "@type": "Person",
-  "@id": KANOMIYU_PERSON_ID,
-  name: "かのうみゆ",
-  alternateName: ["かのう みゆ", "KANO MIYU", "Kano Miyu", "Kanou Miyu", "카노미유", "카노우 미유"],
-  sameAs: [
-    "https://www.instagram.com/miyu_allright/",
-    "https://www.tiktok.com/@miyu_allright",
-    "https://x.com/miyu_allright",
-    "https://www.youtube.com/channel/UCIPBUGqKm4BEEoeJQGiX3Sw",
-  ],
-};
-
+// WebSiteのみだったJSON-LDに、かのうみゆさん本人のPersonエンティティと、
+// 運営者（パレード）のOrganizationエンティティを追加する。前者は表記
+// ゆれ（alternateName）と公式SNS（sameAs）の明示によりGoogleがこの
+// サイトを「かのうみゆさん本人に関する情報源」として認識しやすくする
+// ため、後者はkanomiyu.comが運営主体「OWL」を明記しているのと同じ
+// 考え方で、サイトの運営実態（publisher）を明示するため。実体の定義は
+// lib/seo/metadata.ts に一元化し（app/live/[id]/page.tsx・
+// app/music/[id]/page.tsxの個別ページJSON-LDも同じPersonを`@id`参照で
+// 利用する）、ここではそれをWebSiteに結び付けるだけに留める。
 const WEBSITE_JSON_LD = {
   "@context": "https://schema.org",
   "@graph": [
@@ -110,8 +103,10 @@ const WEBSITE_JSON_LD = {
       description: SITE_DESCRIPTION,
       inLanguage: "ja",
       mainEntity: { "@id": KANOMIYU_PERSON_ID },
+      publisher: { "@id": OPERATOR_ORGANIZATION_ID },
     },
     KANOMIYU_PERSON_JSON_LD,
+    OPERATOR_ORGANIZATION_JSON_LD,
   ],
 };
 

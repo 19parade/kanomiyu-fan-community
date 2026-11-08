@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 
 import { SongCoverImage } from "@/components/music/SongCoverImage";
 import { SITE_URL } from "@/lib/legal/site-info";
-import { buildPageMetadata } from "@/lib/seo/metadata";
+import { buildPageMetadata, KANOMIYU_PERSON_ID } from "@/lib/seo/metadata";
 import { getSongImagePublicUrl } from "@/lib/song-images/public-url";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -122,15 +122,16 @@ export default async function SongDetailPage({ params }: { params: Promise<{ id:
 
   // MusicRecording JSON-LD: restates the same facts already shown on this
   // page (title/release date/cover image) in schema.org form.
+  //
+  // SEO改善（2026-11-08付PM方針）: byArtistは独立したPerson記述ではなく、
+  // app/layout.tsxのサイト全体JSON-LDが定義する同一のPersonエンティティ
+  // を`@id`参照する（app/live/[id]/page.tsxのperformerと同じ理由）。
   const songJsonLd = {
     "@context": "https://schema.org",
     "@type": "MusicRecording",
     name: song.title,
     url: `${SITE_URL}/music/${song.id}`,
-    byArtist: {
-      "@type": "Person",
-      name: "かのうみゆ",
-    },
+    byArtist: { "@id": KANOMIYU_PERSON_ID },
     ...(song.release_date ? { datePublished: song.release_date } : {}),
     ...(coverImageUrl ? { image: [coverImageUrl] } : {}),
     ...(song.description ? { description: song.description } : {}),
