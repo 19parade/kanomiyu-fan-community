@@ -7,6 +7,7 @@ import { ParticipationStatus } from "@/components/live/ParticipationStatus";
 import { PostImageGallery } from "@/components/live/PostImageGallery";
 import { PostCard } from "@/components/feed/PostCard";
 import { PostForm } from "@/components/feed/PostForm";
+import { ShareButton } from "@/components/share/ShareButton";
 import { getEventImagePublicUrl } from "@/lib/event-images/public-url";
 import { formatEventDateTime } from "@/lib/events/format";
 import { getMemberAccess } from "@/lib/member/access";
@@ -299,7 +300,10 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         <EventImage src={imageUrl} alt={`${event.title}のキービジュアル`} />
       </div>
 
-      <h1 className="mt-6 text-2xl font-bold break-words sm:text-3xl">{event.title}</h1>
+      <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
+        <h1 className="min-w-0 text-2xl font-bold break-words sm:text-3xl">{event.title}</h1>
+        <ShareButton pageType="live" title={event.title} path={`/live/${event.id}`} />
+      </div>
 
       <dl className="mt-4 grid grid-cols-1 gap-3 rounded-2xl border border-border bg-surface p-5 text-sm sm:grid-cols-2">
         <div>

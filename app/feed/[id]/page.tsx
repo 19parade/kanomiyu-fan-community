@@ -9,13 +9,14 @@ import { PostContentText } from "@/components/feed/PostContentText";
 import { PostOwnerActions } from "@/components/feed/PostOwnerActions";
 import { ReportButton } from "@/components/feed/ReportButton";
 import { PostImageGallery } from "@/components/live/PostImageGallery";
+import { ShareButton } from "@/components/share/ShareButton";
 import { AvatarInitial } from "@/components/ui/AvatarInitial";
 import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 import { getMemberAccess } from "@/lib/member/access";
 import { extractFirstUrl } from "@/lib/links/extract";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
-import { formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
+import { excerptContent, formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
 import { fetchLinkPreviewsByUrls } from "@/lib/posts/linkPreviews";
 import { COMMENT_LIST_SELECT_COLUMNS, mapCommentListRow, type CommentListRow } from "@/lib/posts/mapRows";
 import type { PublicComment, PublicPostAuthor, PublicPostDetail } from "@/lib/posts/types";
@@ -33,6 +34,15 @@ const POST_TYPE_LABEL: Record<string, string> = {
 };
 
 const INITIAL_COMMENT_PAGE_SIZE = 20;
+
+// posts has no title column (free-form content only) — share features
+// (X post text, Instagram Stories image title line) need a short label
+// standing in for one, so this derives it the same way the feed list's
+// own card excerpt does (lib/posts/format.ts's excerptContent()), just
+// cut shorter: 140 chars (EXCERPT_LENGTH in lib/posts/mapRows.ts) reads
+// fine as a card preview but is too long for a tweet or a Stories image
+// title line.
+const SHARE_TITLE_EXCERPT_LENGTH = 40;
 
 type PostDetailRow = {
   id: string;
@@ -325,6 +335,11 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
           <span className="shrink-0 rounded-full bg-foreground/5 px-2 py-1 text-xs font-bold text-muted">
             {POST_TYPE_LABEL[post.post_type] ?? post.post_type}
           </span>
+          <ShareButton
+            pageType="feed"
+            title={excerptContent(post.content, SHARE_TITLE_EXCERPT_LENGTH)}
+            path={`/feed/${post.id}`}
+          />
         </div>
 
         <PostContentText
