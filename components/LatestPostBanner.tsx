@@ -61,7 +61,7 @@ export async function LatestPostBanner() {
   const excerpt = excerptContent(post.content, EXCERPT_LENGTH);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-4 sm:px-6">
+    <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-4 sm:px-6 sm:pb-0">
       <Link
         href={`/feed/${post.id}`}
         className="flex items-center gap-2 overflow-hidden rounded-full border border-border bg-surface px-4 py-2 text-sm transition-colors hover:bg-foreground/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
