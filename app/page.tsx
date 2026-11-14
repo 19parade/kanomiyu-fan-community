@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 import { HeroCarousel, type HeroImage } from "@/components/HeroCarousel";
+import { LatestPostBanner } from "@/components/LatestPostBanner";
 import { Card } from "@/components/ui/Card";
 import { WhatsNew } from "@/components/WhatsNew";
 import { SITE_NAME } from "@/lib/legal/site-info";
@@ -103,6 +104,8 @@ const ANNOUNCEMENT_DISCLAIMER =
 export default function Home() {
   return (
     <div className="flex flex-1 flex-col">
+      <LatestPostBanner />
+
       <section className="relative overflow-hidden sm:mx-4 sm:mt-4 sm:rounded-3xl">
         <HeroCarousel images={HOMEPAGE_HERO_IMAGES} />
 
