@@ -347,9 +347,7 @@ export default async function PostDetailPage({ params }: { params: Promise<{ id:
           className="mt-6 whitespace-pre-wrap border-t border-border pt-6 text-sm leading-relaxed [overflow-wrap:anywhere]"
         />
 
-        {post.linkPreview && post.linkPreviewUrl ? (
-          <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} />
-        ) : null}
+        {post.linkPreviewUrl ? <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} /> : null}
 
         <PostImageGallery postId={post.id} />
 

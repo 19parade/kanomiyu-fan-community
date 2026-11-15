@@ -48,9 +48,7 @@ export function PostCard({ post }: { post: PublicPostListItem }) {
         className="relative mt-3 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]"
       />
 
-      {post.linkPreview && post.linkPreviewUrl ? (
-        <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} />
-      ) : null}
+      {post.linkPreviewUrl ? <LinkPreviewCard url={post.linkPreviewUrl} preview={post.linkPreview} /> : null}
 
       <div className="pointer-events-none mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span>{formatPostDate(post.created_at)}</span>
