@@ -15,6 +15,7 @@ import { Card } from "@/components/ui/Card";
 import { UNOFFICIAL_LABEL } from "@/lib/legal/site-info";
 import { getMemberAccess } from "@/lib/member/access";
 import { extractFirstUrl } from "@/lib/links/extract";
+import { stripTikTokEmbedCode } from "@/lib/links/tiktokEmbed";
 import { fetchAuthorsByIds } from "@/lib/posts/authors";
 import { excerptContent, formatPostDate, UNAVAILABLE_AUTHOR_LABEL } from "@/lib/posts/format";
 import { fetchLinkPreviewsByUrls } from "@/lib/posts/linkPreviews";
@@ -207,7 +208,10 @@ export async function generateMetadata({
 
   const authorLabel = result.post.author?.display_name ?? "会員";
   const title = `${authorLabel}さんの投稿`;
-  const description = result.post.content.slice(0, 120);
+  // stripTikTokEmbedCode(): a pasted TikTok <iframe> tag must not leak into
+  // <meta name="description">/og:description/twitter:description either —
+  // same reasoning as components/feed/PostContentText.tsx's own stripping.
+  const description = stripTikTokEmbedCode(result.post.content).slice(0, 120);
 
   return buildPageMetadata({ title, description, path: `/feed/${id}` });
 }

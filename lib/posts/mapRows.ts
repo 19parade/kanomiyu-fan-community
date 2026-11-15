@@ -1,4 +1,5 @@
 import { extractFirstUrl } from "@/lib/links/extract";
+import { stripTikTokEmbedCode } from "@/lib/links/tiktokEmbed";
 
 import { excerptContent } from "./format";
 import type { PublicComment, PublicLinkPreview, PublicPostAuthor, PublicPostListItem } from "./types";
@@ -69,6 +70,13 @@ function toPostType(value: string): PublicPostListItem["post_type"] {
  * row's *full* `content` (via extractFirstUrl), not the truncated excerpt —
  * a post's first URL can easily sit past the excerpt's cutoff, and looking
  * it up from the excerpt would silently miss it.
+ *
+ * excerptContent() truncates stripTikTokEmbedCode()'s output, not the raw
+ * row — otherwise a pasted TikTok `<iframe>` tag (easily longer than
+ * EXCERPT_LENGTH) would get cut off mid-tag, leaving a garbled HTML
+ * fragment in the excerpt instead of either the clean tag-free text or
+ * (what components/feed/PostContentText.tsx's own stripping handles for
+ * the un-truncated case) nothing at all.
  */
 export function mapPostListRow(
   row: PostListRow,
@@ -80,7 +88,7 @@ export function mapPostListRow(
     id: row.id,
     author_id: row.author_id,
     post_type: toPostType(row.post_type),
-    excerpt: excerptContent(row.content, EXCERPT_LENGTH),
+    excerpt: excerptContent(stripTikTokEmbedCode(row.content), EXCERPT_LENGTH),
     created_at: row.created_at,
     like_count: row.likes?.[0]?.count ?? 0,
     comment_count: row.comments?.[0]?.count ?? 0,

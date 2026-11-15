@@ -50,3 +50,28 @@ export function extractTikTokEmbedId(url: string): string | null {
 
   return null;
 }
+
+// Matches a whole <iframe ...>...</iframe> block whose opening tag's
+// attributes mention tiktok.com (i.e. its src) — deliberately scoped to
+// "tiktok.com" appearing before the opening tag's closing '>' rather than
+// any <iframe>, so this never touches an unrelated iframe someone might
+// paste.
+const TIKTOK_IFRAME_REGEX = /<iframe\b[^>]*tiktok\.com[^>]*>[\s\S]*?<\/iframe>/gi;
+
+/**
+ * Removes the raw TikTok embed `<iframe>` tag itself from post content
+ * before it is shown as text (user report, 2026-11-15: pasting TikTok's
+ * "Embed video" code showed the literal HTML tag on the page, *in addition
+ * to* the real embedded player this module's other export renders below
+ * it). The tag is never rendered as HTML either way (PostContentText never
+ * uses dangerouslySetInnerHTML) — this only stops it from being shown as
+ * visible plain text once the real player is already doing its job.
+ *
+ * Applied to the *display* copy of content only; the original, unstripped
+ * content remains what's actually stored and what extractFirstUrl() reads
+ * to find the video id for the embed itself — stripping first would remove
+ * the very URL the embed needs.
+ */
+export function stripTikTokEmbedCode(content: string): string {
+  return content.replace(TIKTOK_IFRAME_REGEX, "").trim();
+}
