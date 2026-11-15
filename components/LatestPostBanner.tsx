@@ -1,11 +1,24 @@
 import Link from "next/link";
 
+import { extractFirstUrl } from "@/lib/links/extract";
+import { extractTikTokEmbedId } from "@/lib/links/tiktokEmbed";
 import { excerptContent } from "@/lib/posts/format";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 // 1行のバナーに収める想定のため、一覧カードの抜粋（EXCERPT_LENGTH=140、
 // lib/posts/mapRows.ts）より短く切る。CSSのtruncateと二重の安全策。
 const EXCERPT_LENGTH = 50;
+
+// PM依頼 2026-11-15: TikTok埋め込み機能（lib/links/tiktokEmbed.ts）の
+// 対象になる投稿は、このバナーの「最新投稿」候補から除外する —
+// このバナーはプレーンテキストの1行抜粋のみを表示する設計で、埋め込み
+// プレーヤーもLinkPreviewCardも描画しないため、対象の投稿がここに
+// 選ばれると「生のiframeコードの文字列がそのまま見える」か、将来この
+// バナー自体に埋め込み表示を追加した場合は「1行のバナーに収まらない
+// 大きな埋め込みが出てしまう」という、どちらにしてもこのコンポーネントの
+// 設計意図（1行に収まる軽量な表示）を壊す結果になる。除外した場合は、
+// その次に新しい投稿へ遡って候補を探す。
+const CANDIDATE_LIMIT = 20;
 
 const CATEGORY_LABEL: Record<string, string> = {
   live_report: "LIVE",
@@ -33,6 +46,10 @@ type LatestPostRow = {
  *
  * 新着投稿が1件もない（まだ投稿がゼロ件）場合は何も表示しない —
  * components/WhatsNew.tsxと同じ「0件なら非表示」方針。
+ *
+ * TikTok埋め込み対応（2026-11-15付PM依頼）の対象になる投稿は「最新投稿」
+ * の候補から除外する（CANDIDATE_LIMIT定数のコメント参照）。最新
+ * CANDIDATE_LIMIT件を取得し、除外対象でない最初の1件を使う。
  */
 export async function LatestPostBanner() {
   const supabase = await createSupabaseServerClient();
@@ -43,8 +60,7 @@ export async function LatestPostBanner() {
     .eq("status", "published")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(CANDIDATE_LIMIT);
 
   if (error) {
     // トップページ全体を壊さない — ログのみ残し、0件と同じ非表示扱いにする。
@@ -52,7 +68,12 @@ export async function LatestPostBanner() {
     return null;
   }
 
-  const post = data as LatestPostRow | null;
+  const candidates = (data ?? []) as LatestPostRow[];
+  const post = candidates.find((candidate) => {
+    const firstUrl = extractFirstUrl(candidate.content);
+    return !firstUrl || !extractTikTokEmbedId(firstUrl);
+  });
+
   if (!post) {
     return null;
   }
