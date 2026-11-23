@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 
 import { AlbumArtPlaceholder } from "./AlbumArtPlaceholder";
+import { StreamingLinks } from "@/components/music/StreamingLinks";
 import { buttonClassName } from "@/components/ui/Button";
 
 export type PublicSongCard = {
@@ -13,6 +14,10 @@ export type PublicSongCard = {
   // Already resolved to a display URL server-side (never a raw Storage
   // object key) — see app/music/page.tsx and app/api/music/route.ts.
   cover_image_url: string | null;
+  spotify_url: string | null;
+  apple_music_url: string | null;
+  youtube_music_url: string | null;
+  line_music_url: string | null;
 };
 
 function formatReleaseDate(value: string | null): string {
@@ -27,9 +32,12 @@ function formatReleaseDate(value: string | null): string {
  * Never calls Supabase directly from the browser — every subsequent read
  * goes through the app's own, intentionally-public Route Handler.
  *
- * Each card links to `/music/[id]` (P2). The whole card is the link (larger
- * tap target on mobile); pagination/"load more" state above is untouched by
- * this change — only the per-card markup gained a wrapping `<Link>`.
+ * Each card links to `/music/[id]` (P2) via a `<Link>` wrapping the cover
+ * image + title + release date only — not the whole card — so the
+ * streaming-platform icon row (components/music/StreamingLinks.tsx,
+ * PM依頼 2026-11-23) can sit as a plain sibling below it with its own real
+ * `<a>` tags, never nested inside another `<a>` (invalid HTML the browser
+ * would otherwise have to guess how to resolve).
  */
 export function MusicList({
   initialSongs,
@@ -125,10 +133,10 @@ export function MusicList({
     <div className="mt-6">
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {songs.map((song) => (
-          <li key={song.id}>
+          <li key={song.id} className="flex flex-col rounded-2xl p-2">
             <Link
               href={`/music/${song.id}`}
-              className="group flex flex-col rounded-2xl p-2 transition-colors hover:bg-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="group flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             >
               <div className="aspect-square w-full overflow-hidden rounded-2xl border border-border bg-surface transition-shadow group-hover:shadow-md">
                 {song.cover_image_url && !failedImageIds.has(song.id) ? (
@@ -144,9 +152,19 @@ export function MusicList({
                   <AlbumArtPlaceholder compact />
                 )}
               </div>
-              <p className="mt-2 line-clamp-2 break-words text-sm font-medium text-foreground">{song.title}</p>
+              <p className="mt-2 line-clamp-2 break-words text-sm font-medium text-foreground group-hover:underline">
+                {song.title}
+              </p>
               <p className="text-xs text-muted">{formatReleaseDate(song.release_date)}</p>
             </Link>
+            <StreamingLinks
+              spotifyUrl={song.spotify_url}
+              appleMusicUrl={song.apple_music_url}
+              youtubeMusicUrl={song.youtube_music_url}
+              lineMusicUrl={song.line_music_url}
+              size={16}
+              className="mt-2"
+            />
           </li>
         ))}
       </ul>

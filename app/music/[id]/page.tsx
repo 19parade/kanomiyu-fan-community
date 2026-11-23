@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { SongCoverImage } from "@/components/music/SongCoverImage";
+import { StreamingLinks } from "@/components/music/StreamingLinks";
 import { SITE_URL } from "@/lib/legal/site-info";
 import { buildPageMetadata, KANOMIYU_PERSON_ID } from "@/lib/seo/metadata";
 import { getSongImagePublicUrl } from "@/lib/song-images/public-url";
@@ -16,6 +17,10 @@ type PublicSongDetail = {
   release_date: string | null;
   cover_image_url: string | null;
   description: string | null;
+  spotify_url: string | null;
+  apple_music_url: string | null;
+  youtube_music_url: string | null;
+  line_music_url: string | null;
 };
 
 function formatReleaseDate(value: string | null): string {
@@ -154,6 +159,15 @@ export default async function SongDetailPage({ params }: { params: Promise<{ id:
 
       <h1 className="mt-6 text-2xl font-bold break-words sm:text-3xl">{song.title}</h1>
       <p className="mt-1 text-sm text-muted">{formatReleaseDate(song.release_date)}</p>
+
+      <StreamingLinks
+        spotifyUrl={song.spotify_url}
+        appleMusicUrl={song.apple_music_url}
+        youtubeMusicUrl={song.youtube_music_url}
+        lineMusicUrl={song.line_music_url}
+        size={28}
+        className="mt-4"
+      />
 
       {song.description ? (
         <p className="mt-6 whitespace-pre-wrap break-words rounded-2xl border border-border bg-surface p-6 text-sm leading-relaxed">

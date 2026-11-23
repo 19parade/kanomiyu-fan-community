@@ -100,6 +100,15 @@ export async function POST(request: Request) {
   const descriptionEntry = formData.get("description");
   const description = typeof descriptionEntry === "string" ? descriptionEntry : null;
 
+  // 4つの配信サービスリンク（2026-11-23付PM依頼）。internal.normalize_song_content()
+  // が形式検証を行う — ここでは空文字をnullに落とすだけ。
+  const asNullableString = (value: FormDataEntryValue | null): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  const spotifyUrl = asNullableString(formData.get("spotify_url"));
+  const appleMusicUrl = asNullableString(formData.get("apple_music_url"));
+  const youtubeMusicUrl = asNullableString(formData.get("youtube_music_url"));
+  const lineMusicUrl = asNullableString(formData.get("line_music_url"));
+
   const fileEntries = formData.getAll("file");
   if (fileEntries.length > 1) {
     return errorResponse("INVALID_REQUEST", 400);
@@ -134,6 +143,10 @@ export async function POST(request: Request) {
     release_date: releaseDate,
     cover_image_url: coverImageKey,
     description,
+    spotify_url: spotifyUrl,
+    apple_music_url: appleMusicUrl,
+    youtube_music_url: youtubeMusicUrl,
+    line_music_url: lineMusicUrl,
   });
 
   if (createError) {

@@ -39,6 +39,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   SONG_NOT_FOUND: "この楽曲は見つかりませんでした。一覧から再度お試しください。",
   INVALID_REQUEST: "入力内容を確認してください。",
   INVALID_SONG_STATUS: "公開状態の指定を確認してください。",
+  INVALID_SONG_SPOTIFY_URL: "SpotifyのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_APPLE_MUSIC_URL: "Apple MusicのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_YOUTUBE_MUSIC_URL: "YouTube MusicのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_LINE_MUSIC_URL: "LINE MUSICのURLを確認してください（https:// で始まるURLを入力してください）。",
 };
 const GENERIC_ERROR_MESSAGE = "保存できませんでした。";
 
@@ -57,6 +61,10 @@ type EditSongFormProps = {
   initialCoverImageUrl: string | null;
   initialStatus: string;
   initialUpdatedAt: string;
+  initialSpotifyUrl: string | null;
+  initialAppleMusicUrl: string | null;
+  initialYoutubeMusicUrl: string | null;
+  initialLineMusicUrl: string | null;
 };
 
 /**
@@ -96,12 +104,20 @@ export function EditSongForm({
   initialCoverImageUrl,
   initialStatus,
   initialUpdatedAt,
+  initialSpotifyUrl,
+  initialAppleMusicUrl,
+  initialYoutubeMusicUrl,
+  initialLineMusicUrl,
 }: EditSongFormProps) {
   const router = useRouter();
 
   const [title, setTitle] = useState(initialTitle);
   const [releaseDate, setReleaseDate] = useState(initialReleaseDate ?? "");
   const [description, setDescription] = useState(initialDescription ?? "");
+  const [spotifyUrl, setSpotifyUrl] = useState(initialSpotifyUrl ?? "");
+  const [appleMusicUrl, setAppleMusicUrl] = useState(initialAppleMusicUrl ?? "");
+  const [youtubeMusicUrl, setYoutubeMusicUrl] = useState(initialYoutubeMusicUrl ?? "");
+  const [lineMusicUrl, setLineMusicUrl] = useState(initialLineMusicUrl ?? "");
   const [coverAction, setCoverAction] = useState<CoverActionValue>("keep");
   const [newFile, setNewFile] = useState<File | null>(null);
   const [newFilePreviewUrl, setNewFilePreviewUrl] = useState<string | null>(null);
@@ -215,6 +231,18 @@ export function EditSongForm({
     }
     if (description !== "") {
       formData.append("description", description);
+    }
+    if (spotifyUrl !== "") {
+      formData.append("spotify_url", spotifyUrl);
+    }
+    if (appleMusicUrl !== "") {
+      formData.append("apple_music_url", appleMusicUrl);
+    }
+    if (youtubeMusicUrl !== "") {
+      formData.append("youtube_music_url", youtubeMusicUrl);
+    }
+    if (lineMusicUrl !== "") {
+      formData.append("line_music_url", lineMusicUrl);
     }
     formData.append("cover_action", coverAction);
     if (coverAction === "replace" && newFile) {
@@ -441,6 +469,70 @@ export function EditSongForm({
             className={INPUT_CLASS}
           />
         </div>
+
+        <fieldset disabled={pending} className="flex flex-col gap-4 rounded-xl border border-border p-4">
+          <legend className="px-1 text-sm font-bold">配信サービスへのリンク（任意）</legend>
+          <div>
+            <label htmlFor="edit-song-spotify-url" className="block text-sm font-bold">
+              Spotify
+            </label>
+            <input
+              id="edit-song-spotify-url"
+              name="spotify_url"
+              type="url"
+              placeholder="https://open.spotify.com/..."
+              value={spotifyUrl}
+              disabled={pending}
+              onChange={(event) => setSpotifyUrl(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-song-apple-music-url" className="block text-sm font-bold">
+              Apple Music
+            </label>
+            <input
+              id="edit-song-apple-music-url"
+              name="apple_music_url"
+              type="url"
+              placeholder="https://music.apple.com/..."
+              value={appleMusicUrl}
+              disabled={pending}
+              onChange={(event) => setAppleMusicUrl(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-song-youtube-music-url" className="block text-sm font-bold">
+              YouTube Music
+            </label>
+            <input
+              id="edit-song-youtube-music-url"
+              name="youtube_music_url"
+              type="url"
+              placeholder="https://music.youtube.com/..."
+              value={youtubeMusicUrl}
+              disabled={pending}
+              onChange={(event) => setYoutubeMusicUrl(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-song-line-music-url" className="block text-sm font-bold">
+              LINE MUSIC
+            </label>
+            <input
+              id="edit-song-line-music-url"
+              name="line_music_url"
+              type="url"
+              placeholder="https://music.line.me/..."
+              value={lineMusicUrl}
+              disabled={pending}
+              onChange={(event) => setLineMusicUrl(event.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+        </fieldset>
 
         <fieldset disabled={pending} className="rounded-xl border border-border p-4">
           <legend className="px-1 text-sm font-bold">カバー画像の操作</legend>

@@ -138,6 +138,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const descriptionEntry = formData.get("description");
   const description = typeof descriptionEntry === "string" ? descriptionEntry : null;
 
+  // 4つの配信サービスリンク（2026-11-23付PM依頼）。update_songは全置換の
+  // ため、空文字（=クリアの意図）はnullとして明示的に送る必要がある。
+  const asNullableString = (value: FormDataEntryValue | null): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  const spotifyUrl = asNullableString(formData.get("spotify_url"));
+  const appleMusicUrl = asNullableString(formData.get("apple_music_url"));
+  const youtubeMusicUrl = asNullableString(formData.get("youtube_music_url"));
+  const lineMusicUrl = asNullableString(formData.get("line_music_url"));
+
   const coverActionEntry = formData.get("cover_action");
   if (typeof coverActionEntry !== "string" || !COVER_ACTIONS.has(coverActionEntry)) {
     // Exact lowercase match only — no trim/normalize (frozen contract).
@@ -197,6 +206,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     release_date: releaseDate,
     cover_image_url: coverImageParam,
     description,
+    spotify_url: spotifyUrl,
+    apple_music_url: appleMusicUrl,
+    youtube_music_url: youtubeMusicUrl,
+    line_music_url: lineMusicUrl,
   });
 
   if (updateError) {

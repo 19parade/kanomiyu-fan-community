@@ -33,6 +33,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   UNAUTHORIZED: "ログインが必要です。再度ログインしてください。",
   FORBIDDEN: "この操作を行う権限がありません。",
   ORIGIN_INVALID: "リクエストを処理できませんでした。ページを再読み込みしてからお試しください。",
+  INVALID_SONG_SPOTIFY_URL: "SpotifyのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_APPLE_MUSIC_URL: "Apple MusicのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_YOUTUBE_MUSIC_URL: "YouTube MusicのURLを確認してください（https:// で始まるURLを入力してください）。",
+  INVALID_SONG_LINE_MUSIC_URL: "LINE MUSICのURLを確認してください（https:// で始まるURLを入力してください）。",
 };
 const GENERIC_ERROR_MESSAGE = "保存できませんでした。";
 
@@ -56,6 +60,10 @@ export function NewSongForm() {
   const [title, setTitle] = useState("");
   const [releaseDate, setReleaseDate] = useState("");
   const [description, setDescription] = useState("");
+  const [spotifyUrl, setSpotifyUrl] = useState("");
+  const [appleMusicUrl, setAppleMusicUrl] = useState("");
+  const [youtubeMusicUrl, setYoutubeMusicUrl] = useState("");
+  const [lineMusicUrl, setLineMusicUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -136,6 +144,18 @@ export function NewSongForm() {
     if (description !== "") {
       formData.append("description", description);
     }
+    if (spotifyUrl !== "") {
+      formData.append("spotify_url", spotifyUrl);
+    }
+    if (appleMusicUrl !== "") {
+      formData.append("apple_music_url", appleMusicUrl);
+    }
+    if (youtubeMusicUrl !== "") {
+      formData.append("youtube_music_url", youtubeMusicUrl);
+    }
+    if (lineMusicUrl !== "") {
+      formData.append("line_music_url", lineMusicUrl);
+    }
     if (file) {
       formData.append("file", file);
     }
@@ -211,6 +231,70 @@ export function NewSongForm() {
           value={description}
           disabled={pending}
           onChange={(event) => setDescription(event.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="new-song-spotify-url" className="block text-sm font-bold">
+          Spotify（任意）
+        </label>
+        <input
+          id="new-song-spotify-url"
+          name="spotify_url"
+          type="url"
+          placeholder="https://open.spotify.com/..."
+          value={spotifyUrl}
+          disabled={pending}
+          onChange={(event) => setSpotifyUrl(event.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="new-song-apple-music-url" className="block text-sm font-bold">
+          Apple Music（任意）
+        </label>
+        <input
+          id="new-song-apple-music-url"
+          name="apple_music_url"
+          type="url"
+          placeholder="https://music.apple.com/..."
+          value={appleMusicUrl}
+          disabled={pending}
+          onChange={(event) => setAppleMusicUrl(event.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="new-song-youtube-music-url" className="block text-sm font-bold">
+          YouTube Music（任意）
+        </label>
+        <input
+          id="new-song-youtube-music-url"
+          name="youtube_music_url"
+          type="url"
+          placeholder="https://music.youtube.com/..."
+          value={youtubeMusicUrl}
+          disabled={pending}
+          onChange={(event) => setYoutubeMusicUrl(event.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="new-song-line-music-url" className="block text-sm font-bold">
+          LINE MUSIC（任意）
+        </label>
+        <input
+          id="new-song-line-music-url"
+          name="line_music_url"
+          type="url"
+          placeholder="https://music.line.me/..."
+          value={lineMusicUrl}
+          disabled={pending}
+          onChange={(event) => setLineMusicUrl(event.target.value)}
           className={INPUT_CLASS}
         />
       </div>

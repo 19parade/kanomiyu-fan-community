@@ -16,6 +16,10 @@ type AdminSongDetail = {
   status: string;
   created_at: string;
   updated_at: string;
+  spotify_url: string | null;
+  apple_music_url: string | null;
+  youtube_music_url: string | null;
+  line_music_url: string | null;
 };
 
 /**
@@ -97,6 +101,10 @@ export default async function EditSongPage({ params }: { params: Promise<{ id: s
           initialCoverImageUrl={coverImageUrl}
           initialStatus={song.status}
           initialUpdatedAt={song.updated_at}
+          initialSpotifyUrl={song.spotify_url}
+          initialAppleMusicUrl={song.apple_music_url}
+          initialYoutubeMusicUrl={song.youtube_music_url}
+          initialLineMusicUrl={song.line_music_url}
         />
       </div>
     </main>

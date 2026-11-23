@@ -16,12 +16,17 @@ export const metadata: Metadata = buildPageMetadata({
   path: "/music",
 });
 
-// The exact 4 columns get_public_songs() returns (S2) — never widened.
+// The exact 8 columns get_public_songs() returns (S2, widened 2026-11-23
+// to add the 4 streaming-platform link columns) — never widened beyond this.
 type PublicSongRpcRow = {
   id: string;
   title: string;
   release_date: string | null;
   cover_image_url: string | null;
+  spotify_url: string | null;
+  apple_music_url: string | null;
+  youtube_music_url: string | null;
+  line_music_url: string | null;
 };
 
 /**
@@ -71,6 +76,10 @@ export default async function MusicListPage() {
     title: row.title,
     release_date: row.release_date,
     cover_image_url: getSongImagePublicUrl(supabase, row.cover_image_url),
+    spotify_url: row.spotify_url,
+    apple_music_url: row.apple_music_url,
+    youtube_music_url: row.youtube_music_url,
+    line_music_url: row.line_music_url,
   }));
 
   return (

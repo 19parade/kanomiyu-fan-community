@@ -28,6 +28,12 @@ const DB_ERROR_STATUS: Record<string, number> = {
   // INVALID_SONG_STATUS_FILTER above (that one is the list's query-param
   // validation; this one is the target_status argument to the RPC itself).
   INVALID_SONG_STATUS: 400,
+  // 4つの配信サービスリンク（2026-11-23付PM依頼。see supabase/migrations/
+  // 20261123000000_songs_streaming_links.sql）。
+  INVALID_SONG_SPOTIFY_URL: 400,
+  INVALID_SONG_APPLE_MUSIC_URL: 400,
+  INVALID_SONG_YOUTUBE_MUSIC_URL: 400,
+  INVALID_SONG_LINE_MUSIC_URL: 400,
 };
 
 export type MappedSongDbError = { code: string; status: number };
